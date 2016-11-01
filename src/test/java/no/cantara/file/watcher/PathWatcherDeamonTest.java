@@ -27,7 +27,7 @@ import java.nio.file.Path;
  * </pre>
  *
  */
-@Test(enabled = true)
+@Test(enabled = false)
 public class PathWatcherDeamonTest {
 
     private final static Logger log = LoggerFactory.getLogger(PathWatcherDeamonTest.class);
