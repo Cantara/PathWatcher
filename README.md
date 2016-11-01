@@ -13,6 +13,11 @@ Short doc PathWatcher is:
 * In test it writes to the directory `target/watcher`
 * Read the test case for polling configuration
 
+Known limitaitons:
+
+* Has not been tested on Windows yet
+* Does not support multiple watch dirs
+
 ## Use
 
 ### Default
