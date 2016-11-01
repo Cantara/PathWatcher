@@ -11,7 +11,7 @@ Short doc PathWatcher is:
   * PatchWatcher will determine if Native I/O is possible. If not, it will autoamtically go for PollBased
   * Native and Poll based mode comes with two differnet configurations
 * In test it writes to the directory `target/watcher`
-* Read the test case for polling configuration
+* To understand the polling feature, study the test cases for polling configuration and (!!) => `FilePollEventsProducer` and algo in`FileDetermineCompletionWorker`
 
 Known limitaitons:
 
