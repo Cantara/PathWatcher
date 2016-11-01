@@ -30,7 +30,7 @@
 
     <scm>
         <developerConnection>
-            scm:git:ssh://git@github.com:Cantara/path-watcher.git
+            scm:git:ssh://git@github.com/Cantara/path-watcher.git
         </developerConnection>
         <connection>scm:git:https://github.com/Cantara/path-watcher.git</connection>
         <url>https://wiki.cantara.no/</url>
