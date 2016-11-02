@@ -83,6 +83,8 @@ public class FileNativeEventsConsumer implements Runnable {
                             log.error("Removed handler exception:\n{}", e);
                         }
                     }
+
+                    PathWatcher.getInstance().getFileWorkerMap().remove(event.getFile());
                 }
 
             } catch (InterruptedException e) {

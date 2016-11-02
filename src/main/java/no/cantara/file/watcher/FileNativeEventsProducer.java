@@ -137,8 +137,11 @@ public class FileNativeEventsProducer implements Runnable {
                         eventAttrs = Files.readAttributes(eventFile, BasicFileAttributes.class);
                     }
 
-                    if (kind == ENTRY_CREATE) {
+                    log.trace("WatchEvent - kind={}, count={}, context={}", ev.kind(), ev.count(), ev.context());
 
+                    // todo: event handling must be revised, because files may be trapped due to the file discovery map
+
+                    if (kind == ENTRY_CREATE) {
                         if (!PathWatcher.getInstance().getFileWorkerMap().checkState(eventFile, FileWatchState.DISOCVERED)) {
 
                             // add file to event
@@ -151,12 +154,20 @@ public class FileNativeEventsProducer implements Runnable {
                     } else if (kind == ENTRY_MODIFY) {
 
                         if (!PathWatcher.getInstance().getFileWorkerMap().checkState(eventFile, FileWatchKey.FILE_MODIFY)) {
+                            log.trace("FileWatchEvent is NULL? eventFile={}", eventFile);
                             FileWatchEvent fileWatchEvent = PathWatcher.getInstance().getFileWorkerMap().getFile(eventFile);
                             BasicFileAttributes newAttrs = Files.readAttributes(eventFile, BasicFileAttributes.class);
                             // we have a modiefied state
                             if (!eventAttrs.equals(newAttrs)) {
-                                log.trace("-----------------------> eventFile={}, fileWatchEvent={}, newAttrs={}", eventFile, fileWatchEvent, newAttrs);
-                                FileWatchEvent newFileWatchEvent = new FileWatchEvent(eventFile, FileWatchKey.FILE_MODIFY, fileWatchEvent.getFileWatchState(), newAttrs); //  verify that we don't return discovered. use the latest state in map
+                                //log.trace("-----------------------> eventFile={}, fileWatchEvent={}, newAttrs={}", eventFile, fileWatchEvent, newAttrs);
+
+                                // todo: revise the way we handle a modified file. In this condition the file has probably not been created yet
+                                FileWatchEvent newFileWatchEvent = null;
+                                if (fileWatchEvent == null) {
+                                    newFileWatchEvent = new FileWatchEvent(eventFile, FileWatchKey.FILE_MODIFY, FileWatchState.DISOCVERED, newAttrs);
+                                } else {
+                                    newFileWatchEvent = new FileWatchEvent(eventFile, FileWatchKey.FILE_MODIFY, fileWatchEvent.getFileWatchState(), newAttrs); //  verify that we don't return discovered. use the latest state in map
+                                }
                                 PathWatcher.getInstance().post(newFileWatchEvent);
                                 queue.put(newFileWatchEvent);
                                 log.trace("Discovery - Produced: [{}]{}", newFileWatchEvent.getFileWatchKey(), eventFile);
@@ -177,8 +188,8 @@ public class FileNativeEventsProducer implements Runnable {
                                 queue.put(newFileWatchEvent);
                                 log.trace("Discovery - Produced: [{}]{}", newFileWatchEvent.getFileWatchKey(), eventFile);
 
-                            // fileWatchEvent and event may be null in case it was deleted in the mean time
-                            // todo: check the timing of consumer remove
+                                // fileWatchEvent and event may be null in case it was deleted in the mean time
+                                // todo: check the timing of consumer remove
                             } else if (fileWatchEvent == null && event != null) {
                                 FileWatchEvent newFileWatchEvent = new FileWatchEvent(eventFile, FileWatchKey.FILE_REMOVED, FileWatchState.COMPLETED, new RemovedNativeEventBasicFileAttributes()); //  verify that we don't return discovered. use the latest state in map
                                 PathWatcher.getInstance().post(newFileWatchEvent);
