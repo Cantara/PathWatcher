@@ -12,7 +12,7 @@ public class FileSystemSupport {
     }
 
     public static boolean isLinux() {
-        return (getOSString().indexOf("Linux") > -1);
+        return (getOSString().contains("Linux"));
     }
 
     public static boolean isLinuxFileSystem() {
@@ -20,7 +20,7 @@ public class FileSystemSupport {
     }
 
     public static boolean isMacOS() {
-        return ( (getOSString().indexOf("MacOS") > -1) || (getOSString().indexOf("OS X") > -1) );
+        return ((getOSString().contains("MacOS")) || (getOSString().contains("OS X")));
     }
 
     public static boolean isMacOSFileSystem() {
@@ -31,4 +31,11 @@ public class FileSystemSupport {
         return (isLinuxFileSystem() && !isMacOSFileSystem());
     }
 
+    public static boolean isWindows() {
+        return getOSString().contains("Windows");
+    }
+
+    public static boolean isWindowsFileSystem() {
+        return (isWindows() && "WindowsFileSystem".equals(FileSystems.getDefault().getClass().getSimpleName()));
+    }
 }
