@@ -6,11 +6,14 @@ import com.google.common.eventbus.EventBus;
 import com.google.common.eventbus.Subscribe;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonParser;
+import com.google.gson.JsonObject;
 import no.cantara.file.watcher.event.FileWatchEvent;
 import no.cantara.file.watcher.event.PathWatchInternalEvent;
-import no.cantara.file.watcher.support.*;
+import no.cantara.file.watcher.support.FileCompletionWorkerMode;
+import no.cantara.file.watcher.support.FileWatchHandler;
+import no.cantara.file.watcher.support.FileWatchKey;
+import no.cantara.file.watcher.support.FileWorkerMap;
+import no.cantara.file.watcher.support.PathWatchScanner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -19,39 +22,53 @@ import java.util.Set;
 
 /**
  * Created by oranheim on 19/10/2016.
- *
+ * <p>
  * Todo:
  * (done) 1. Make FileWatchKey for CREATED, MODIFIED, REMOVED
  * (done) 2. Make FileWatchState for PENDING, OPEN, LOCKED, CLOSED
  * (done - externalized) 3. Make Callable handler in workers: ReadFileCallable, WriteFileCallable, CopyCallable, MoveCallable, etc.
  * (done) 4. Implemented JDK/OS detector and support WatchService for Async WatchEvent on Zulu JDK8 for linux, so it won't need any poll, but use take
  * (done) 5. Compare changes in file system and remove entries from map
- *
+ * <p>
  * Advanced:
  * (tbd) 1. Support multiple watchDirs in workers through use of the worker pool in fileproducer and fileconsumer.
- *
  */
 public class PathWatcher {
 
     private final static Logger log = LoggerFactory.getLogger(PathWatcher.class);
+
     private static PathWatcher instance;
 
     public static long SCAN_DIRECTORY_INTERVAL = 5000; // -1 = scan only once
+
     public static long POLL_INTERVAL = 100;
+
     public static FileCompletionWorkerMode FILE_COMPLETION_MODE = FileCompletionWorkerMode.TIMEOUT;
+
     public static long FILE_COMPLETION_TIMEOUT_OR_RETRIES = 2500; // should be split in two
+
     public static long WORKER_SHUTDOWN_TIMEOUT = 150; // used in force shutdownNow hook
 
     private final EventBus fileEventBus;
+
     private FileWorkerMap fileWorkerMap;
+
     private Path watchDir;
+
     private EventWorker eventWorker;
+
     private FileProducerWorker fileProducerWorker;
+
     private FileConsumerWorker fileConsumerWorker;
+
     private Set<FileWatchHandler> createHandler = Sets.newConcurrentHashSet();
+
     private Set<FileWatchHandler> modifyHandler = Sets.newConcurrentHashSet();
+
     private Set<FileWatchHandler> removeHandler = Sets.newConcurrentHashSet();
+
     private PathWatchScanner pathWatchScannerMode;
+
     private boolean running;
 
     private PathWatcher() {
@@ -59,6 +76,8 @@ public class PathWatcher {
             pathWatchScannerMode = PathWatchScanner.NATIVE_FILE_SYSTEM;
         } else if (FileSystemSupport.isMacOSFileSystem()) {
             pathWatchScannerMode = PathWatchScanner.POLL_FILE_SYSTEM;
+        } else if (FileSystemSupport.isWindowsFileSystem()) {
+            pathWatchScannerMode = PathWatchScanner.NATIVE_FILE_SYSTEM;
         } else {
             throw new UnsupportedOperationException("Unknown FileSystem");
         }
@@ -134,7 +153,9 @@ public class PathWatcher {
     }
 
     public synchronized FileWorkerMap getFileWorkerMap() {
-        if (fileWorkerMap == null) fileWorkerMap = new FileWorkerMap();
+        if (fileWorkerMap == null) {
+            fileWorkerMap = new FileWorkerMap();
+        }
         return fileWorkerMap;
     }
 
@@ -184,21 +205,19 @@ public class PathWatcher {
     }
 
     public String getConfigInfo() {
-        StringBuffer info = new StringBuffer();
-        info.append(String.format("{pathWatchScannerMode: \"%s\", ", pathWatchScannerMode));
-        info.append(String.format("watchDir: \"%s\", ", watchDir));
+        JsonObject json = new JsonObject();
+        json.addProperty("pathWatchScannerMode", pathWatchScannerMode.toString());
+        json.addProperty("watchDir", watchDir.toString());
         if (isPollEvents()) {
-            info.append(String.format("workerMode: \"%s\", ", FILE_COMPLETION_MODE));
-            info.append(String.format("scanInterval: %d, ", SCAN_DIRECTORY_INTERVAL));
-            info.append(String.format("timeoutOrRetryInterval: %d, ", FILE_COMPLETION_TIMEOUT_OR_RETRIES));
-            info.append(String.format("threadPollInterval: %d, ", POLL_INTERVAL));
+            json.addProperty("workerMode", FILE_COMPLETION_MODE.toString());
+            json.addProperty("scanInterval", SCAN_DIRECTORY_INTERVAL);
+            json.addProperty("timeoutOrRetryInterval", FILE_COMPLETION_TIMEOUT_OR_RETRIES);
+            json.addProperty("threadPollInterval", POLL_INTERVAL);
         }
-        info.append(String.format("workerShutdownTimeout: %d}", WORKER_SHUTDOWN_TIMEOUT));
+        json.addProperty("workerShutdownTimeout", WORKER_SHUTDOWN_TIMEOUT);
 
         Gson gson = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
-        JsonParser jp = new JsonParser();
-        JsonElement je = jp.parse(info.toString());
-        return gson.toJson(je);
+        return gson.toJson(json);
     }
 
     public void start() {
@@ -241,5 +260,4 @@ public class PathWatcher {
         }
         return instance;
     }
-
 }
