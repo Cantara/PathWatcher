@@ -18,12 +18,18 @@ public class FileProducerWorker {
     private final BlockingQueue producerQueue;
     private final PathWatchScanner mode;
     private final Path dir;
+    private final boolean scanForExistingFilesAtStartup;
 
     public FileProducerWorker(PathWatchScanner mode, Path dir) {
+        this(mode, dir, false);
+    }
+
+    public FileProducerWorker(PathWatchScanner mode, Path dir, boolean scanForExistingFilesAtStartup) {
         worker = Executors.newCachedThreadPool();
         this.producerQueue = new ArrayBlockingQueue(1000);
         this.dir = dir;
         this.mode = mode;
+        this.scanForExistingFilesAtStartup = scanForExistingFilesAtStartup;
     }
 
     public BlockingQueue getQueue() {
@@ -34,7 +40,7 @@ public class FileProducerWorker {
         try {
             log.debug("[start] worker thread");
             if (PathWatchScanner.NATIVE_FILE_SYSTEM.equals(mode)) {
-                worker.execute(new FileNativeEventsProducer(producerQueue, dir));
+                worker.execute(new FileNativeEventsProducer(producerQueue, dir, scanForExistingFilesAtStartup));
 
             } else if (PathWatchScanner.POLL_FILE_SYSTEM.equals(mode)) {
                 worker.execute(new FilePollEventsProducer(producerQueue, dir));

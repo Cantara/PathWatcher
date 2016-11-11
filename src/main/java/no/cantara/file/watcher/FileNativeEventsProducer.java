@@ -31,10 +31,17 @@ public class FileNativeEventsProducer implements Runnable {
     private final Map<WatchKey, Path> keys;
     private final boolean recursive;
     private boolean trace = false;
+    private final boolean scanForExistingFilesAtFirstRun;
+
 
     public FileNativeEventsProducer(BlockingQueue queue, Path dir) throws IOException {
+        this(queue, dir, false);
+    }
+
+    public FileNativeEventsProducer(BlockingQueue queue, Path dir, boolean scanForExistingFilesAtFirstRun) throws IOException {
         this.queue = queue;
         this.dir = dir;
+        this.scanForExistingFilesAtFirstRun = scanForExistingFilesAtFirstRun;
 
         this.watcher = FileSystems.getDefault().newWatchService();
         this.keys = new HashMap<WatchKey, Path>();
@@ -93,8 +100,39 @@ public class FileNativeEventsProducer implements Runnable {
         });
     }
 
+
+    private void generateEventForExistingFiles(Path parentPath) {
+        try {
+            Files.list(parentPath)
+                    .filter(p -> ! Files.isDirectory(p))
+                    .peek(System.out::println)
+                    .forEach(filePath -> {
+                        if (!PathWatcher.getInstance().getFileWorkerMap().checkState(filePath, FileWatchState.DISOCVERED)) {
+
+                            // add file to event
+                            try {
+                                FileWatchEvent fileWatchEvent = new FileWatchEvent(filePath, FileWatchKey.FILE_CREATED, FileWatchState.DISOCVERED, Files.readAttributes(filePath, BasicFileAttributes.class));
+                                PathWatcher.getInstance().post(fileWatchEvent);
+                                queue.put(fileWatchEvent);
+                            } catch (InterruptedException e) {
+                                //
+                            } catch (IOException ioe) {
+                                log.warn("Failed to create event for existing file {}", filePath);
+                            }
+                            log.trace("Discovery - Produced: [{}]{}", FileWatchKey.FILE_CREATED, filePath);
+                        }
+                    });
+        } catch (IOException e) {
+            log.warn("Failed to generate event for existing files: {}", e.getMessage());
+        }
+    }
+
     @Override
     public void run() {
+       if ( scanForExistingFilesAtFirstRun ) {
+            generateEventForExistingFiles(dir);
+        }
+
         for (; ; ) {
             try {
 
@@ -117,6 +155,7 @@ public class FileNativeEventsProducer implements Runnable {
 
                     // TBD - provide example of how OVERFLOW event is handled
                     if (kind == OVERFLOW) {
+                        log.info("overflow {} - {}", kind.name(), kind.type());
                         continue;
                     }
 

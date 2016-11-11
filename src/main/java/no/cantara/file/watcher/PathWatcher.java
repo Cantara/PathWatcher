@@ -49,6 +49,8 @@ public class PathWatcher {
 
     public static long WORKER_SHUTDOWN_TIMEOUT = 150; // used in force shutdownNow hook
 
+    private boolean scanForExistingFilesAtStartup = false;
+
     private final EventBus fileEventBus;
 
     private FileWorkerMap fileWorkerMap;
@@ -88,6 +90,14 @@ public class PathWatcher {
 
     public void registerCreatedHandler(FileWatchHandler createdFileAction) {
         createHandler.add(createdFileAction);
+    }
+
+    /**
+     * Change behaviour of FileNativeEventProducer to generate create file event for existing files in directory
+     * @param scanForExistingFilesAtStartup specify if you want event for existing files on the filesystem
+     */
+    public void setScanForExistingFilesAtStartup(boolean scanForExistingFilesAtStartup) {
+        this.scanForExistingFilesAtStartup = scanForExistingFilesAtStartup;
     }
 
     public Set<FileWatchHandler> getCreateHandlers() {
@@ -223,7 +233,7 @@ public class PathWatcher {
     public void start() {
         if (!isRunning()) {
             eventWorker = new EventWorker();
-            fileProducerWorker = new FileProducerWorker(pathWatchScannerMode, watchDir);
+            fileProducerWorker = new FileProducerWorker(pathWatchScannerMode, watchDir, scanForExistingFilesAtStartup);
             fileConsumerWorker = new FileConsumerWorker(pathWatchScannerMode, fileProducerWorker.getQueue(), watchDir);
 
             eventWorker.start();
