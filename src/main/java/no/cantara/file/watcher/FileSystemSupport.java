@@ -28,7 +28,7 @@ public class FileSystemSupport {
     }
 
     public static boolean hasJDKEventDrivenFileSystem() {
-        return (isLinuxFileSystem() && !isMacOSFileSystem());
+        return ((isLinuxFileSystem() || isWindowsFileSystem()) && !isMacOSFileSystem());
     }
 
     public static boolean isWindows() {

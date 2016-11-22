@@ -6,6 +6,8 @@ import javax.xml.transform.*;
 import javax.xml.transform.dom.DOMSource;
 import javax.xml.transform.stream.StreamResult;
 import java.io.*;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
 import java.util.stream.Collectors;
 
 /**
@@ -109,6 +111,28 @@ public class CommonUtil {
         return new BufferedReader(new InputStreamReader(classLoader
                 .getResourceAsStream(rn)))
                 .lines().collect(Collectors.joining("\n"));
+    }
+    
+    //Try to get a lock on the file to determine if it is already in use
+    public static boolean isFileCompletelyWritten(File file) {
+        FileChannel channel = null;
+        try {
+            channel = new RandomAccessFile(file, "rw").getChannel();
+            FileLock lock = channel.lock();
+            lock.release();
+            return true;
+        } catch (Exception e) {
+            //Not possible to lock, the file is in use
+        } finally {
+            if (channel != null) {
+                try {
+                    channel.close();
+                } catch (IOException e) {
+                    // ignore exception
+                }
+            }
+        }
+        return false;
     }
 
 }

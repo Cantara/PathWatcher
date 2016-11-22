@@ -1,5 +1,6 @@
 package no.cantara.file.watcher;
 
+import no.cantara.file.util.CommonUtil;
 import no.cantara.file.watcher.event.FileWatchEvent;
 import no.cantara.file.watcher.support.FileWatchKey;
 import no.cantara.file.watcher.support.FileWatchState;
@@ -12,7 +13,7 @@ import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.*;
 
 import static java.nio.file.LinkOption.NOFOLLOW_LINKS;
 import static java.nio.file.StandardWatchEventKinds.*;
@@ -24,7 +25,8 @@ public class FileNativeEventsProducer implements Runnable {
 
     private final static Logger log = LoggerFactory.getLogger(FileNativeEventsProducer.class);
 
-    private final BlockingQueue queue;
+    private final BlockingQueue<FileWatchEvent> queue;
+    private final BlockingQueue<DelayedFileWatchEvent> delayQueue;
     private final Path dir;
 
     private final WatchService watcher;
@@ -33,18 +35,22 @@ public class FileNativeEventsProducer implements Runnable {
     private boolean trace = false;
     private final boolean scanForExistingFilesAtFirstRun;
 
+    private ExecutorService executorService;
 
-    public FileNativeEventsProducer(BlockingQueue queue, Path dir) throws IOException {
+
+
+    public FileNativeEventsProducer(BlockingQueue<FileWatchEvent> queue, Path dir) throws IOException {
         this(queue, dir, false);
     }
 
-    public FileNativeEventsProducer(BlockingQueue queue, Path dir, boolean scanForExistingFilesAtFirstRun) throws IOException {
+    public FileNativeEventsProducer(BlockingQueue<FileWatchEvent> queue, Path dir, boolean scanForExistingFilesAtFirstRun) throws IOException {
+        this.delayQueue = new DelayQueue<>();
         this.queue = queue;
         this.dir = dir;
         this.scanForExistingFilesAtFirstRun = scanForExistingFilesAtFirstRun;
 
         this.watcher = FileSystems.getDefault().newWatchService();
-        this.keys = new HashMap<WatchKey, Path>();
+        this.keys = new HashMap<>();
         this.recursive = false;
 
         if (recursive) {
@@ -105,7 +111,6 @@ public class FileNativeEventsProducer implements Runnable {
         try {
             Files.list(parentPath)
                     .filter(p -> ! Files.isDirectory(p))
-                    .peek(System.out::println)
                     .forEach(filePath -> {
                         if (!PathWatcher.getInstance().getFileWorkerMap().checkState(filePath, FileWatchState.DISOCVERED)) {
 
@@ -127,9 +132,20 @@ public class FileNativeEventsProducer implements Runnable {
         }
     }
 
+    private void createDelayedEventConsumer() {
+        executorService = Executors.newSingleThreadExecutor();
+        executorService.execute(new DelayedFileWatchEventConsumer(delayQueue, queue));
+    }
+
+    private boolean isFileInProgress(Path eventFile) {
+        return (PathWatcher.getInstance().getFileWorkerMap().checkState(eventFile, FileWatchState.INCOMPLETE)
+                && (!PathWatcher.getInstance().getFileWorkerMap().checkState(eventFile, FileWatchState.COMPLETED)));
+    }
+
     @Override
     public void run() {
-       if ( scanForExistingFilesAtFirstRun ) {
+        createDelayedEventConsumer();
+        if ( scanForExistingFilesAtFirstRun ) {
             generateEventForExistingFiles(dir);
         }
 
@@ -183,35 +199,47 @@ public class FileNativeEventsProducer implements Runnable {
                     if (kind == ENTRY_CREATE) {
                         if (!PathWatcher.getInstance().getFileWorkerMap().checkState(eventFile, FileWatchState.DISOCVERED)) {
 
-                            // add file to event
-                            FileWatchEvent fileWatchEvent = new FileWatchEvent(eventFile, FileWatchKey.FILE_CREATED, FileWatchState.DISOCVERED, eventAttrs);
-                            PathWatcher.getInstance().post(fileWatchEvent);
-                            queue.put(fileWatchEvent);
-                            log.trace("Discovery - Produced: [{}]{}", fileWatchEvent.getFileWatchKey(), eventFile);
+                            if (CommonUtil.isFileCompletelyWritten(eventFile.toFile())) {
+                                // add file to event
+                                FileWatchEvent fileWatchEvent = new FileWatchEvent(eventFile, FileWatchKey.FILE_CREATED, FileWatchState.DISOCVERED, eventAttrs);
+                                PathWatcher.getInstance().post(fileWatchEvent);
+                                queue.put(fileWatchEvent);
+                                log.trace("Discovery - Produced: [{}]{}", fileWatchEvent.getFileWatchKey(), eventFile);
+                            } else {
+                                FileWatchEvent fileWatchEvent = new FileWatchEvent(eventFile, FileWatchKey.FILE_CREATED, FileWatchState.INCOMPLETE, eventAttrs);
+                                DelayedFileWatchEvent delayedFileWatchEvent = new DelayedFileWatchEvent(fileWatchEvent, PathWatcher.DELAY_QUEUE_DELAY_TIME);
+                                PathWatcher.getInstance().post(fileWatchEvent);
+                                delayQueue.put(delayedFileWatchEvent);
+                                log.trace("Discovery - Produced: [{}]{}, but was delayed in {}", fileWatchEvent.getFileWatchKey(), eventFile, PathWatcher.DELAY_QUEUE_DELAY_TIME);
+                            }
                         }
 
                     } else if (kind == ENTRY_MODIFY) {
 
                         if (!PathWatcher.getInstance().getFileWorkerMap().checkState(eventFile, FileWatchKey.FILE_MODIFY)) {
-                            log.trace("FileWatchEvent is NULL? eventFile={}", eventFile);
-                            FileWatchEvent fileWatchEvent = PathWatcher.getInstance().getFileWorkerMap().getFile(eventFile);
-                            BasicFileAttributes newAttrs = Files.readAttributes(eventFile, BasicFileAttributes.class);
-                            // we have a modiefied state
-                            if (!eventAttrs.equals(newAttrs)) {
-                                //log.trace("-----------------------> eventFile={}, fileWatchEvent={}, newAttrs={}", eventFile, fileWatchEvent, newAttrs);
+                            if (!isFileInProgress(eventFile) ) {
 
-                                // todo: revise the way we handle a modified file. In this condition the file has probably not been created yet
-                                FileWatchEvent newFileWatchEvent = null;
-                                if (fileWatchEvent == null) {
-                                    newFileWatchEvent = new FileWatchEvent(eventFile, FileWatchKey.FILE_MODIFY, FileWatchState.DISOCVERED, newAttrs);
+                                FileWatchEvent fileWatchEvent = PathWatcher.getInstance().getFileWorkerMap().getFile(eventFile);
+                                BasicFileAttributes newAttrs = Files.readAttributes(eventFile, BasicFileAttributes.class);
+                                // we have a modiefied state
+                                if (!eventAttrs.equals(newAttrs)) {
+                                    //log.trace("-----------------------> eventFile={}, fileWatchEvent={}, newAttrs={}", eventFile, fileWatchEvent, newAttrs);
+
+                                    // todo: revise the way we handle a modified file. In this condition the file has probably not been created yet
+                                    FileWatchEvent newFileWatchEvent = null;
+                                    if (fileWatchEvent == null) {
+                                        newFileWatchEvent = new FileWatchEvent(eventFile, FileWatchKey.FILE_MODIFY, FileWatchState.DISOCVERED, newAttrs);
+                                    } else {
+                                        newFileWatchEvent = new FileWatchEvent(eventFile, FileWatchKey.FILE_MODIFY, fileWatchEvent.getFileWatchState(), newAttrs); //  verify that we don't return discovered. use the latest state in map
+                                    }
+                                    PathWatcher.getInstance().post(newFileWatchEvent);
+                                    queue.put(newFileWatchEvent);
+                                    log.trace("Discovery - Produced: [{}]{}", newFileWatchEvent.getFileWatchKey(), eventFile);
                                 } else {
-                                    newFileWatchEvent = new FileWatchEvent(eventFile, FileWatchKey.FILE_MODIFY, fileWatchEvent.getFileWatchState(), newAttrs); //  verify that we don't return discovered. use the latest state in map
+                                    log.trace("Discovery - Skipping an already scheduled file: {}", eventFile);
                                 }
-                                PathWatcher.getInstance().post(newFileWatchEvent);
-                                queue.put(newFileWatchEvent);
-                                log.trace("Discovery - Produced: [{}]{}", newFileWatchEvent.getFileWatchKey(), eventFile);
                             } else {
-                                log.trace("Discovery - Skipping an already scheduled file: {}", eventFile);
+                                log.trace("Discovery - skipping a file waiting to be completed {}", eventFile);
                             }
                         }
 
@@ -273,4 +301,16 @@ public class FileNativeEventsProducer implements Runnable {
 
         }
     }
+    public void shutdown() {
+        executorService.shutdown();
+        try {
+            if (!executorService.awaitTermination(PathWatcher.WORKER_SHUTDOWN_TIMEOUT, TimeUnit.MILLISECONDS)) {
+                executorService.shutdownNow();
+            }
+            log.info("shutdown success");
+        } catch (InterruptedException e) {
+            log.error("shutdown failed",e);
+        }
+    }
+
 }

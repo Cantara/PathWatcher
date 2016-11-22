@@ -49,6 +49,10 @@ public class PathWatcher {
 
     public static long WORKER_SHUTDOWN_TIMEOUT = 150; // used in force shutdownNow hook
 
+    public static long DELAY_QUEUE_DELAY_TIME = 5000;
+
+    public static int DELAY_QUEUE_RETRY_NUMBER = 3;
+
     private boolean scanForExistingFilesAtStartup = false;
 
     private final EventBus fileEventBus;

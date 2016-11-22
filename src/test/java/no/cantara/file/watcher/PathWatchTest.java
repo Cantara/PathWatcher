@@ -7,16 +7,20 @@ import no.cantara.file.watcher.event.FileWatchEvent;
 import no.cantara.file.watcher.support.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.testng.Assert;
 import org.testng.annotations.Test;
 
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.nio.channels.FileLock;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Random;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import static org.testng.Assert.*;
 
@@ -213,10 +217,13 @@ public class PathWatchTest {
 
             try {
                 FileOutputStream fos = null;
+                FileLock fileLock = null;
                 try {
                     fos = new FileOutputStream(file.toFile());
+                    fileLock = fos.getChannel().lock();
                     int numbOfRandomBytes = 1024 * 1024 * 10; // 10 Mb
                     Random r = new Random(26);
+                    log.trace("----------------------> Start writing file {}...", file.toString());
                     for(int n = 0; n<(numbOfRandomBytes/64); n++) {
                         byte[] bytes = new byte[64];
                         for(int m = 0; m<64; m++) {
@@ -236,8 +243,13 @@ public class PathWatchTest {
                         }
                     }
                 } finally {
-                    fos.flush();
-                    fos.close();
+                    if (fos != null) {
+                        fos.flush();
+                        if (fileLock != null) {
+                            fileLock.release();
+                        }
+                        fos.close();
+                    }
                     done = true;
                     log.trace("----------------------> Long File is written to: {}", file.toString());
                 }
@@ -248,6 +260,61 @@ public class PathWatchTest {
 
         public boolean isDone() {
             return done;
+        }
+    }
+
+    @Test(enabled=true)
+    public void testFileTakesLongTimeToWrite() throws Exception {
+        String fileName = "veryLargeFile.txt";
+        Path currentDir = FileWatchUtils.getCurrentPath();
+        Path watchDir = currentDir.resolve("target/watcher/inbox");
+        Path slowFile = watchDir.resolve(fileName);
+        FileWatchUtils.createDirectories(watchDir) ;
+
+        PathWatcher pathWatcher = PathWatcher.getInstance();
+        pathWatcher.registerCreatedHandler(event -> {
+            log.info("Received event; {}", event);
+            Path eventFile = event.getFile();
+            Assert.assertTrue(fileName.equals(event.getFile().getFileName().toString()));
+            Assert.assertTrue(Files.exists(eventFile));
+            Assert.assertTrue(Files.isReadable(eventFile));
+        });
+        pathWatcher.watch(watchDir);
+        pathWatcher.start();
+
+        do {
+            waitSomeTime(300);
+        }  while (!pathWatcher.isRunning());
+        log.info("pathWatcher isRunning {}", pathWatcher.isRunning());
+
+        WriteLongFileRunnable longFileRunnable = new WriteLongFileRunnable(slowFile, false);
+        ExecutorService executorService = Executors.newSingleThreadExecutor();
+        executorService.execute(longFileRunnable);
+
+        do {
+            waitSomeTime(100);
+        } while (! longFileRunnable.isDone());
+
+        waitSomeTime(6000);  // wait for message to get through the delay queue
+        //cleanup
+        pathWatcher.stop();
+        executorService.shutdown();
+
+        if (Files.exists(slowFile)) {
+            try {
+                Files.delete(slowFile);
+                log.debug("File deleted");
+            } catch (IOException e) {
+                //
+            }
+        }
+    }
+
+    private void waitSomeTime(int waitingTime) {
+        try {
+            Thread.sleep(waitingTime);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
         }
     }
 
@@ -369,5 +436,4 @@ public class PathWatchTest {
 
 
     }
-
 }
