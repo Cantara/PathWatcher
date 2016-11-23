@@ -292,10 +292,10 @@ public class PathWatchTest {
         executorService.execute(longFileRunnable);
 
         do {
-            waitSomeTime(100);
+            waitSomeTime(300);
         } while (! longFileRunnable.isDone());
 
-        waitSomeTime(6000);  // wait for message to get through the delay queue
+        waitSomeTime(PathWatcher.DELAY_QUEUE_DELAY_TIME + 100);  // wait for message to get through the delay queue
         //cleanup
         pathWatcher.stop();
         executorService.shutdown();
@@ -310,7 +310,7 @@ public class PathWatchTest {
         }
     }
 
-    private void waitSomeTime(int waitingTime) {
+    private void waitSomeTime(long waitingTime) {
         try {
             Thread.sleep(waitingTime);
         } catch (InterruptedException e) {
