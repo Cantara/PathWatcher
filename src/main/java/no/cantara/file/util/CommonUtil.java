@@ -8,6 +8,7 @@ import javax.xml.transform.stream.StreamResult;
 import java.io.*;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
+import java.nio.file.Files;
 import java.util.stream.Collectors;
 
 /**
@@ -112,9 +113,12 @@ public class CommonUtil {
                 .getResourceAsStream(rn)))
                 .lines().collect(Collectors.joining("\n"));
     }
-    
+
     //Try to get a lock on the file to determine if it is already in use
     public static boolean isFileCompletelyWritten(File file) {
+        if (Files.isDirectory(file.toPath())) {
+            return true;
+        }
         FileChannel channel = null;
         try {
             channel = new RandomAccessFile(file, "rw").getChannel();

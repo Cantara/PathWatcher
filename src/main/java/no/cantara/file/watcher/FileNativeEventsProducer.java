@@ -197,7 +197,7 @@ public class FileNativeEventsProducer implements Runnable {
                     // todo: event handling must be revised, because files may be trapped due to the file discovery map
 
                     if (kind == ENTRY_CREATE) {
-                        if (!PathWatcher.getInstance().getFileWorkerMap().checkState(eventFile, FileWatchState.DISOCVERED)) {
+                        if ( !Files.isDirectory(eventFile) && !PathWatcher.getInstance().getFileWorkerMap().checkState(eventFile, FileWatchState.DISOCVERED)) {
 
                             if (CommonUtil.isFileCompletelyWritten(eventFile.toFile())) {
                                 // add file to event
@@ -216,7 +216,7 @@ public class FileNativeEventsProducer implements Runnable {
 
                     } else if (kind == ENTRY_MODIFY) {
 
-                        if (!PathWatcher.getInstance().getFileWorkerMap().checkState(eventFile, FileWatchKey.FILE_MODIFY)) {
+                        if ( !Files.isDirectory(eventFile) && !PathWatcher.getInstance().getFileWorkerMap().checkState(eventFile, FileWatchKey.FILE_MODIFY)) {
                             if (!isFileInProgress(eventFile) ) {
 
                                 FileWatchEvent fileWatchEvent = PathWatcher.getInstance().getFileWorkerMap().getFile(eventFile);

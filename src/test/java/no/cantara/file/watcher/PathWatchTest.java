@@ -13,8 +13,7 @@ import org.testng.annotations.Test;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.channels.FileLock;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Iterator;
 import java.util.List;
@@ -295,7 +294,7 @@ public class PathWatchTest {
             waitSomeTime(300);
         } while (! longFileRunnable.isDone());
 
-        waitSomeTime(PathWatcher.DELAY_QUEUE_DELAY_TIME + 100);  // wait for message to get through the delay queue
+        waitSomeTime(PathWatcher.DELAY_QUEUE_DELAY_TIME + 300);  // wait for message to get through the delay queue
         //cleanup
         pathWatcher.stop();
         executorService.shutdown();
@@ -317,6 +316,46 @@ public class PathWatchTest {
             e.printStackTrace();
         }
     }
+
+    @Test(enabled=true)
+    public void testDirectoryCreationIsIgnored() throws Exception {
+        Path currentDir = FileWatchUtils.getCurrentPath();
+        Path watchDir = currentDir.resolve("target/watcher/inbox");
+        Path newDir = watchDir.resolve("new_directory");
+        FileWatchUtils.createDirectories(watchDir) ;
+
+        PathWatcher pathWatcher = PathWatcher.getInstance();
+        pathWatcher.registerCreatedHandler(event -> {
+            log.info("Received event; {}", event);
+            assertNotEquals(newDir.getFileName().toString(), event.getFile().getFileName().toString(), String.format("Should not receive this event: %s - %s - isDirectory: %s",event.getFileWatchKey(), event.getFile().getFileName(), Files.isDirectory(event.getFile())));
+        });
+        pathWatcher.watch(watchDir);
+        pathWatcher.start();
+
+        do {
+            waitSomeTime(300);
+        }  while (!pathWatcher.isRunning());
+        log.info("pathWatcher isRunning {}", pathWatcher.isRunning());
+
+        //create a new entry event for directory
+        FileWatchUtils.createDirectories(newDir);
+        waitSomeTime(PathWatcher.DELAY_QUEUE_DELAY_TIME + 100);
+
+        //cleanup
+        pathWatcher.stop();
+
+        if (Files.exists(newDir)) {
+            try {
+                Files.delete(newDir);
+                log.debug("{} deleted", newDir);
+            } catch (IOException e) {
+                //
+            }
+        }
+
+
+    }
+
 
     @Test(enabled = true, groups = "pre-test")
     public void testFileWorkerMap() throws Exception {
