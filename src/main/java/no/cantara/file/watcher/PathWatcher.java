@@ -286,6 +286,7 @@ public class PathWatcher {
             fileConsumerWorker.shutdown();
             eventWorker.shutdown();
             createHandler.clear();
+            fileCompletelyCreatedHandler.clear();
             modifyHandler.clear();
             removeHandler.clear();
             getFileWorkerMap().clear();

@@ -53,7 +53,26 @@ public class FileNativeEventsConsumer implements Runnable {
                         }
                     }
 
-                } else if (FileWatchKey.FILE_MODIFY.equals(event.getFileWatchKey())) {
+                }  else if (FileWatchKey.FILE_COMPLETELY_CREATED.equals(event.getFileWatchKey())) {
+
+                    // are we ready to call an action
+                    BasicFileAttributes attrs = null;
+                    if (Files.exists(event.getFile())) {
+                        attrs = Files.readAttributes(event.getFile(), BasicFileAttributes.class);
+                    }
+                    FileWatchEvent fileWatchEvent = new FileWatchEvent(event.getFile(), event.getFileWatchKey(), FileWatchState.COMPLETED, attrs);
+                    PathWatcher.getInstance().post(fileWatchEvent);
+
+                    Set<FileWatchHandler> actions = PathWatcher.getInstance().getFileCompletelyCreatedHandlers();
+                    for (FileWatchHandler action : actions) {
+                        try {
+                            action.invoke(fileWatchEvent);
+                        } catch (Exception e) {
+                            log.error("Created handler exception:\n{}", e);
+                        }
+                    }
+
+                 } else if (FileWatchKey.FILE_MODIFY.equals(event.getFileWatchKey())) {
 
                     PathWatcher.getInstance().post(event);
                     Set<FileWatchHandler> actions = PathWatcher.getInstance().getModifyHandlers();
@@ -78,22 +97,6 @@ public class FileNativeEventsConsumer implements Runnable {
                     }
 
                     PathWatcher.getInstance().getFileWorkerMap().remove(event.getFile());
-
-                } else if (FileWatchKey.FILE_COMPLETELY_CREATED.equals(event.getFileWatchKey())) {
-
-                    // are we ready to call an action
-                    BasicFileAttributes attrs = Files.readAttributes(event.getFile(), BasicFileAttributes.class);
-                    FileWatchEvent fileWatchEvent = new FileWatchEvent(event.getFile(), event.getFileWatchKey(), FileWatchState.COMPLETED, attrs);
-                    PathWatcher.getInstance().post(fileWatchEvent);
-
-                    Set<FileWatchHandler> actions = PathWatcher.getInstance().getFileCompletelyCreatedHandlers();
-                    for (FileWatchHandler action : actions) {
-                        try {
-                            action.invoke(fileWatchEvent);
-                        } catch (Exception e) {
-                            log.error("Created handler exception:\n{}", e);
-                        }
-                    }
 
                 } else {
                     log.warn("Unhandled fileWatchKey {}", event.getFileWatchKey());
