@@ -12,7 +12,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.util.Iterator;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 
@@ -46,9 +45,7 @@ public class FileNativeEventsConsumer implements Runnable {
                     PathWatcher.getInstance().post(fileWatchEvent);
 
                     Set<FileWatchHandler> actions = PathWatcher.getInstance().getCreateHandlers();
-                    Iterator<FileWatchHandler> it = actions.iterator();
-                    while (it.hasNext()) {
-                        FileWatchHandler action = it.next();
+                    for (FileWatchHandler action : actions) {
                         try {
                             action.invoke(fileWatchEvent);
                         } catch (Exception e) {
@@ -60,9 +57,7 @@ public class FileNativeEventsConsumer implements Runnable {
 
                     PathWatcher.getInstance().post(event);
                     Set<FileWatchHandler> actions = PathWatcher.getInstance().getModifyHandlers();
-                    Iterator<FileWatchHandler> it = actions.iterator();
-                    while (it.hasNext()) {
-                        FileWatchHandler action = it.next();
+                    for (FileWatchHandler action : actions) {
                         try {
                             action.invoke(event);
                         } catch (Exception e) {
@@ -74,9 +69,7 @@ public class FileNativeEventsConsumer implements Runnable {
 
                     PathWatcher.getInstance().post(event);
                     Set<FileWatchHandler> actions = PathWatcher.getInstance().getRemoveHandlers();
-                    Iterator<FileWatchHandler> it = actions.iterator();
-                    while (it.hasNext()) {
-                        FileWatchHandler action = it.next();
+                    for (FileWatchHandler action : actions) {
                         try {
                             action.invoke(event);
                         } catch (Exception e) {
@@ -85,6 +78,25 @@ public class FileNativeEventsConsumer implements Runnable {
                     }
 
                     PathWatcher.getInstance().getFileWorkerMap().remove(event.getFile());
+
+                } else if (FileWatchKey.FILE_COMPLETELY_CREATED.equals(event.getFileWatchKey())) {
+
+                    // are we ready to call an action
+                    BasicFileAttributes attrs = Files.readAttributes(event.getFile(), BasicFileAttributes.class);
+                    FileWatchEvent fileWatchEvent = new FileWatchEvent(event.getFile(), event.getFileWatchKey(), FileWatchState.COMPLETED, attrs);
+                    PathWatcher.getInstance().post(fileWatchEvent);
+
+                    Set<FileWatchHandler> actions = PathWatcher.getInstance().getFileCompletelyCreatedHandlers();
+                    for (FileWatchHandler action : actions) {
+                        try {
+                            action.invoke(fileWatchEvent);
+                        } catch (Exception e) {
+                            log.error("Created handler exception:\n{}", e);
+                        }
+                    }
+
+                } else {
+                    log.warn("Unhandled fileWatchKey {}", event.getFileWatchKey());
                 }
 
             } catch (InterruptedException e) {

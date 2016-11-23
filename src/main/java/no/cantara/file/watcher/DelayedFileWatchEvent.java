@@ -6,7 +6,7 @@ import java.util.concurrent.Delayed;
 import java.util.concurrent.TimeUnit;
 
 /**
- * The implementation of the Delayed interface used for queueing FileWatchEvents not completely created.
+ * The implementation of the Delayed interface used for queueing FileWatchEvents until the file creation is finished.
  */
 public class DelayedFileWatchEvent implements Delayed {
     private FileWatchEvent fileWatchEvent;

@@ -7,6 +7,7 @@ public enum FileWatchKey {
 
     FILE_CREATED,
     FILE_MODIFY,
-    FILE_REMOVED;
+    FILE_REMOVED,
+    FILE_COMPLETELY_CREATED
 
 }

@@ -2,20 +2,19 @@
 
 Short doc PathWatcher is:
 
-* a singleton that currently is limited to listenting to one `watchDir` only
+* a singleton that currently is limited to listening to one `watchDir` only
 * it uses worker threads to and event based i/o to produce new file discoveries
-* disocvered files are handled in a seperate consumer thread that invokes call back events
+* discovered files are handled in a separate consumer thread that invokes call back events
 * callbacks are not thread-safe!
 * supports both Native and Poll based FileSystem. Polling is used to support MacOS/OSX (because NativeFileSystem support is not available in JDKs!)
 * By default:
-  * PatchWatcher will determine if Native I/O is possible. If not, it will autoamtically go for PollBased
-  * Native and Poll based mode comes with two differnet configurations
+  * PatchWatcher will determine if Native I/O is possible. If not, it will automatically go for PollBased
+  * Native and Poll based mode comes with two different configurations
 * In test it writes to the directory `target/watcher`
 * To understand the polling feature, study the test cases for polling configuration and (!!) => `FilePollEventsProducer` and algo in`FileDetermineCompletionWorker`
 
-Known limitaitons:
+Known limitations:
 
-* Has not been tested on Windows yet
 * Does not support multiple watch dirs
 
 ## Use
@@ -30,6 +29,7 @@ pw.watch(watchDir);
 pw.registerCreatedHandler(new CreatedHandler());
 pw.registerModifiedHandler(new ModifiedHandler());
 pw.registerRemovedHandler(new RemovedHandler());
+pw.registerFileCompletelyCreatedHandler(new FileCompletelyCreatedHandler());
 
 pw.start();
 Thread.sleep(5000);
@@ -47,6 +47,9 @@ pw.watch(watchDir);
 pw.registerCreatedHandler(new CreatedHandler());
 pw.registerModifiedHandler(new ModifiedHandler());
 pw.registerRemovedHandler(new RemovedHandler());
+pw.registerFileCompletelyCreatedHandler(new FileCompletelyCreatedHandler());
+pw.setScanForExistingFilesAtStartup(true); // create createEvent and FileCompletelyCreated event for existing files at startup
+
 
 pw.start();
 Thread.sleep(5000);
@@ -113,6 +116,24 @@ public static class RemovedHandler implements FileWatchHandler {
     public void invoke(FileWatchEvent event) {
         Path file = event.getFile();
         log.trace("OnRemovedFileHandler - Received FileWatchEvent from Consumer: {}", file);
+    }
+}
+```
+
+#### FileCompletelyCreatedHandler
+
+```java
+public static class FileCompletelyCreatedHandler implements FileWatchHandler {
+    @Override
+    public void invoke(FileWatchEvent event) {
+        Path file = event.getFile();
+        log.trace("OnFileCompletelyCreatedFileAction - Received FileWatchEvent from Consumer: {}", file);
+        try {
+            if (Files.exists(file))
+                Files.delete(file);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 }
 ```

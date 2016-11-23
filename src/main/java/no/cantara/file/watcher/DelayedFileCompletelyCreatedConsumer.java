@@ -15,15 +15,16 @@ import java.util.concurrent.BlockingQueue;
 
 /**
  * Consumer of the delayed FileWatchEvents
- * Create an FileWatchEvent if file is finished otherwise delay it again
+ * Create a FILE_COMPLETELY_CREATED event if the file is finished within the time limit
+ * Time limit is controlled by {@link PathWatcher#DELAY_QUEUE_DELAY_TIME} and  {@link PathWatcher#DELAY_QUEUE_RETRY_NUMBER}
  */
-public class DelayedFileWatchEventConsumer implements Runnable {
-    private static Logger logger = LoggerFactory.getLogger(DelayedFileWatchEventConsumer.class);
+public class DelayedFileCompletelyCreatedConsumer implements Runnable {
+    private static Logger logger = LoggerFactory.getLogger(DelayedFileCompletelyCreatedConsumer.class);
 
     private BlockingQueue<DelayedFileWatchEvent> queue;
     private BlockingQueue<FileWatchEvent> completeEventsQueue;
 
-    public DelayedFileWatchEventConsumer(BlockingQueue<DelayedFileWatchEvent> queue, BlockingQueue<FileWatchEvent> completeEventsQueue) {
+    public DelayedFileCompletelyCreatedConsumer(BlockingQueue<DelayedFileWatchEvent> queue, BlockingQueue<FileWatchEvent> completeEventsQueue) {
         super();
         this.queue = queue;
         this.completeEventsQueue = completeEventsQueue;
@@ -39,17 +40,13 @@ public class DelayedFileWatchEventConsumer implements Runnable {
                 logger.debug("Event taken from queue {}", delayedFileWatchEvent.toString());
                 Path eventFile = delayedFileWatchEvent.getFileWatchEvent().getFile();
                 if (CommonUtil.isFileCompletelyWritten(eventFile.toFile())) {
-                    if (!PathWatcher.getInstance().getFileWorkerMap().checkState(eventFile, FileWatchState.DISOCVERED)) {
-                        try {
-                            FileWatchEvent fileWatchEvent = new FileWatchEvent(eventFile, FileWatchKey.FILE_CREATED, FileWatchState.DISOCVERED, Files.readAttributes(eventFile, BasicFileAttributes.class));
-                            PathWatcher.getInstance().post(fileWatchEvent);
-                            completeEventsQueue.put(fileWatchEvent);
-                            logger.trace("Discovery - Produced: [{}]{}", fileWatchEvent.getFileWatchKey(), eventFile);
-                        } catch (IOException ioe) {
-                            logger.warn("Failed to read FileAttributes for {}, event discarded", eventFile.toString());
-                        }
-                    } else {
-                        logger.trace("File {} already handled", eventFile);
+                    try {
+                        FileWatchEvent fileWatchEvent = new FileWatchEvent(eventFile, FileWatchKey.FILE_COMPLETELY_CREATED, FileWatchState.DISOCVERED, Files.readAttributes(eventFile, BasicFileAttributes.class));
+                        PathWatcher.getInstance().post(fileWatchEvent);
+                        completeEventsQueue.put(fileWatchEvent);
+                        logger.trace("Discovery - Produced: [{}]{}", fileWatchEvent.getFileWatchKey(), eventFile);
+                    } catch (IOException ioe) {
+                        logger.warn("Failed to read FileAttributes for {}, event discarded", eventFile.toString());
                     }
                 } else {
                     if (delayedFileWatchEvent.incrementCounter() < PathWatcher.DELAY_QUEUE_RETRY_NUMBER) {

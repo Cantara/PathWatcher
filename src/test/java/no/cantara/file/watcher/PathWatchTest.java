@@ -3,11 +3,11 @@ package no.cantara.file.watcher;
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Multimap;
+import no.cantara.file.util.CommonUtil;
 import no.cantara.file.watcher.event.FileWatchEvent;
 import no.cantara.file.watcher.support.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.testng.Assert;
 import org.testng.annotations.Test;
 
 import java.io.FileOutputStream;
@@ -15,11 +15,10 @@ import java.io.IOException;
 import java.nio.channels.FileLock;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Random;
+import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 
 import static org.testng.Assert.*;
 
@@ -263,21 +262,26 @@ public class PathWatchTest {
     }
 
     @Test(enabled=true)
-    public void testFileTakesLongTimeToWrite() throws Exception {
+    public void testNativeFileCompletelyCreated() throws IOException {
+        if (FileSystemSupport.isMacOS()) {
+            log.info("Native test not possible to run on mac os");
+            return;
+        }
+
         String fileName = "veryLargeFile.txt";
         Path currentDir = FileWatchUtils.getCurrentPath();
         Path watchDir = currentDir.resolve("target/watcher/inbox");
         Path slowFile = watchDir.resolve(fileName);
+        Path shortFile = watchDir.resolve("shortFile.txt");
         FileWatchUtils.createDirectories(watchDir) ;
 
         PathWatcher pathWatcher = PathWatcher.getInstance();
-        pathWatcher.registerCreatedHandler(event -> {
-            log.info("Received event; {}", event);
-            Path eventFile = event.getFile();
-            Assert.assertTrue(fileName.equals(event.getFile().getFileName().toString()));
-            Assert.assertTrue(Files.exists(eventFile));
-            Assert.assertTrue(Files.isReadable(eventFile));
-        });
+        List<String> fileNameList = new ArrayList<>();
+        fileNameList.add(slowFile.getFileName().toString());
+        fileNameList.add(shortFile.getFileName().toString());
+
+        FileCompletelyCreatedHandler handler = new FileCompletelyCreatedHandler(fileNameList);
+        pathWatcher.registerFileCompletelyCreatedHandler(handler);
         pathWatcher.watch(watchDir);
         pathWatcher.start();
 
@@ -290,6 +294,10 @@ public class PathWatchTest {
         ExecutorService executorService = Executors.newSingleThreadExecutor();
         executorService.execute(longFileRunnable);
 
+        FileOutputStream fos = new FileOutputStream(shortFile.toFile());
+        fos.write("This is a short file".getBytes());
+        fos.close();
+
         do {
             waitSomeTime(300);
         } while (! longFileRunnable.isDone());
@@ -299,13 +307,12 @@ public class PathWatchTest {
         pathWatcher.stop();
         executorService.shutdown();
 
-        if (Files.exists(slowFile)) {
-            try {
-                Files.delete(slowFile);
-                log.debug("File deleted");
-            } catch (IOException e) {
-                //
-            }
+        Files.deleteIfExists(slowFile);
+        Files.deleteIfExists(shortFile);
+
+        if (handler.isTestFailed()) {
+            String errorString = handler.getErrorMessages().stream().collect(Collectors.joining("\n"));
+            fail(String.format("Test failed with %s errors: %s", handler.getErrorMessages().size(), errorString));
         }
     }
 
@@ -317,17 +324,62 @@ public class PathWatchTest {
         }
     }
 
+    private static class FileCompletelyCreatedHandler implements FileWatchHandler {
+        private List<String> errorMessages = new ArrayList<>();
+        private ArrayList<String> expectedFileNames;
+        private boolean notAllFilesReceivedErrorAdded = false;
+
+        FileCompletelyCreatedHandler(List<String> expectedFileNames) {
+            this.expectedFileNames =(ArrayList) expectedFileNames;
+        }
+
+        boolean isTestFailed() {
+            return !errorMessages.isEmpty() || !expectedFileNames.isEmpty();
+        }
+
+        List<String> getErrorMessages() {
+            if (!expectedFileNames.isEmpty() && !notAllFilesReceivedErrorAdded) {
+                errorMessages.add(String.format("Events for all files was not received: %s", expectedFileNames.toString()));
+                notAllFilesReceivedErrorAdded = true;
+            }
+            return errorMessages;
+        }
+
+        @Override
+        public void invoke(FileWatchEvent event) {
+            log.info("Received event; {}", event);
+            Path eventFile = event.getFile();
+            if (! expectedFileNames.contains(eventFile.getFileName().toString() )) {
+                errorMessages.add(String.format("Received unexpected event %s", eventFile.getFileName().toString()));
+            } else {
+                expectedFileNames.remove(eventFile.getFileName().toString());
+            }
+            if (!Files.exists(eventFile)) {
+                errorMessages.add(String.format("File doesn't exist %s", eventFile.toString()));
+            }
+            if (! CommonUtil.isFileCompletelyWritten(eventFile.toFile())) {
+                errorMessages.add(String.format("%s is not completely written as expected",eventFile));
+            }
+        }
+    }
+
     @Test(enabled=true)
-    public void testDirectoryCreationIsIgnored() throws Exception {
+    public void testNativeDirectoryCreationIsIgnored() throws IOException {
+        if (FileSystemSupport.isMacOS()) {
+            log.info("Native test not possible to run on mac os");
+            return;
+        }
         Path currentDir = FileWatchUtils.getCurrentPath();
         Path watchDir = currentDir.resolve("target/watcher/inbox");
         Path newDir = watchDir.resolve("new_directory");
         FileWatchUtils.createDirectories(watchDir) ;
 
         PathWatcher pathWatcher = PathWatcher.getInstance();
-        pathWatcher.registerCreatedHandler(event -> {
+        pathWatcher.registerFileCompletelyCreatedHandler(event -> {
             log.info("Received event; {}", event);
-            assertNotEquals(newDir.getFileName().toString(), event.getFile().getFileName().toString(), String.format("Should not receive this event: %s - %s - isDirectory: %s",event.getFileWatchKey(), event.getFile().getFileName(), Files.isDirectory(event.getFile())));
+            assertNotEquals(newDir.getFileName().toString(), event.getFile().getFileName().toString(),
+                    String.format("Should not receive this event: %s - %s - isDirectory: %s",
+                            event.getFileWatchKey(), event.getFile().getFileName(), Files.isDirectory(event.getFile())));
         });
         pathWatcher.watch(watchDir);
         pathWatcher.start();
