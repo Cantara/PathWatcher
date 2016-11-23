@@ -3,6 +3,7 @@ package no.cantara.file.watcher;
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Multimap;
+import no.cantara.file.util.CommonUtil;
 import no.cantara.file.watcher.event.FileWatchEvent;
 import no.cantara.file.watcher.support.*;
 import org.slf4j.Logger;
@@ -11,12 +12,13 @@ import org.testng.annotations.Test;
 
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.nio.channels.FileLock;
+import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Random;
+import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 
 import static org.testng.Assert.*;
 
@@ -42,12 +44,6 @@ public class PathWatchTest {
         public void invoke(FileWatchEvent event) {
             Path file = event.getFile();
             log.trace("OnCreatedFileAction - Received FileWatchEvent from Consumer: {}", file);
-            try {
-                if (Files.exists(file))
-                    Files.delete(file);
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
         }
     }
 
@@ -122,6 +118,16 @@ public class PathWatchTest {
         fis.close();
 
         Thread.sleep(2500);
+
+        Files.list(inboxDir).forEach(filePath -> {
+            try {
+                Files.deleteIfExists(filePath);
+            } catch (IOException ioe) {
+                //
+            }
+        });
+
+        Thread.sleep(1000);
 
         log.trace("STOPPING..");
         pw.stop(); // blocking call
@@ -213,10 +219,13 @@ public class PathWatchTest {
 
             try {
                 FileOutputStream fos = null;
+                FileLock fileLock = null;
                 try {
                     fos = new FileOutputStream(file.toFile());
+                    fileLock = fos.getChannel().lock();
                     int numbOfRandomBytes = 1024 * 1024 * 10; // 10 Mb
                     Random r = new Random(26);
+                    log.trace("----------------------> Start writing file {}...", file.toString());
                     for(int n = 0; n<(numbOfRandomBytes/64); n++) {
                         byte[] bytes = new byte[64];
                         for(int m = 0; m<64; m++) {
@@ -236,8 +245,13 @@ public class PathWatchTest {
                         }
                     }
                 } finally {
-                    fos.flush();
-                    fos.close();
+                    if (fos != null) {
+                        fos.flush();
+                        if (fileLock != null) {
+                            fileLock.release();
+                        }
+                        fos.close();
+                    }
                     done = true;
                     log.trace("----------------------> Long File is written to: {}", file.toString());
                 }
@@ -250,6 +264,154 @@ public class PathWatchTest {
             return done;
         }
     }
+
+    @Test(enabled=true)
+    public void testNativeFileCompletelyCreated() throws IOException {
+        if (FileSystemSupport.isMacOS()) {
+            log.info("Native test not possible to run on mac os");
+            return;
+        }
+
+        String fileName = "veryLargeFile.txt";
+        Path currentDir = FileWatchUtils.getCurrentPath();
+        Path watchDir = currentDir.resolve("target/watcher/inbox");
+        Path slowFile = watchDir.resolve(fileName);
+        Path shortFile = watchDir.resolve("shortFile.txt");
+        FileWatchUtils.createDirectories(watchDir) ;
+
+        PathWatcher pathWatcher = PathWatcher.getInstance();
+        List<String> fileNameList = new ArrayList<>();
+        fileNameList.add(slowFile.getFileName().toString());
+        fileNameList.add(shortFile.getFileName().toString());
+
+        FileCompletelyCreatedHandler handler = new FileCompletelyCreatedHandler(fileNameList);
+        pathWatcher.registerFileCompletelyCreatedHandler(handler);
+        pathWatcher.watch(watchDir);
+        pathWatcher.start();
+
+        do {
+            waitSomeTime(300);
+        }  while (!pathWatcher.isRunning());
+        log.info("pathWatcher isRunning {}", pathWatcher.isRunning());
+
+        WriteLongFileRunnable longFileRunnable = new WriteLongFileRunnable(slowFile, false);
+        ExecutorService executorService = Executors.newSingleThreadExecutor();
+        executorService.execute(longFileRunnable);
+
+        FileOutputStream fos = new FileOutputStream(shortFile.toFile());
+        fos.write("This is a short file".getBytes());
+        fos.close();
+
+        do {
+            waitSomeTime(300);
+        } while (! longFileRunnable.isDone());
+
+        waitSomeTime(PathWatcher.DELAY_QUEUE_DELAY_TIME + 300);  // wait for message to get through the delay queue
+        //cleanup
+        pathWatcher.stop();
+        executorService.shutdown();
+
+        Files.deleteIfExists(slowFile);
+        Files.deleteIfExists(shortFile);
+
+        if (handler.isTestFailed()) {
+            String errorString = handler.getErrorMessages().stream().collect(Collectors.joining("\n"));
+            fail(String.format("Test failed with %s errors: %s", handler.getErrorMessages().size(), errorString));
+        }
+    }
+
+    private void waitSomeTime(long waitingTime) {
+        try {
+            Thread.sleep(waitingTime);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private static class FileCompletelyCreatedHandler implements FileWatchHandler {
+        private List<String> errorMessages = new ArrayList<>();
+        private ArrayList<String> expectedFileNames;
+        private boolean notAllFilesReceivedErrorAdded = false;
+
+        FileCompletelyCreatedHandler(List<String> expectedFileNames) {
+            this.expectedFileNames =(ArrayList) expectedFileNames;
+        }
+
+        boolean isTestFailed() {
+            return !errorMessages.isEmpty() || !expectedFileNames.isEmpty();
+        }
+
+        List<String> getErrorMessages() {
+            if (!expectedFileNames.isEmpty() && !notAllFilesReceivedErrorAdded) {
+                errorMessages.add(String.format("Events for all files was not received: %s", expectedFileNames.toString()));
+                notAllFilesReceivedErrorAdded = true;
+            }
+            return errorMessages;
+        }
+
+        @Override
+        public void invoke(FileWatchEvent event) {
+            log.info("Received event; {}", event);
+            Path eventFile = event.getFile();
+            if (! expectedFileNames.contains(eventFile.getFileName().toString() )) {
+                errorMessages.add(String.format("Received unexpected event %s", eventFile.getFileName().toString()));
+            } else {
+                expectedFileNames.remove(eventFile.getFileName().toString());
+            }
+            if (!Files.exists(eventFile)) {
+                errorMessages.add(String.format("File doesn't exist %s", eventFile.toString()));
+            }
+            if (! CommonUtil.isFileCompletelyWritten(eventFile.toFile())) {
+                errorMessages.add(String.format("%s is not completely written as expected",eventFile));
+            }
+        }
+    }
+
+    @Test(enabled=true)
+    public void testNativeDirectoryCreationIsIgnored() throws IOException {
+        if (FileSystemSupport.isMacOS()) {
+            log.info("Native test not possible to run on mac os");
+            return;
+        }
+        Path currentDir = FileWatchUtils.getCurrentPath();
+        Path watchDir = currentDir.resolve("target/watcher/inbox");
+        Path newDir = watchDir.resolve("new_directory");
+        FileWatchUtils.createDirectories(watchDir) ;
+
+        PathWatcher pathWatcher = PathWatcher.getInstance();
+        pathWatcher.registerFileCompletelyCreatedHandler(event -> {
+            log.info("Received event; {}", event);
+            assertNotEquals(newDir.getFileName().toString(), event.getFile().getFileName().toString(),
+                    String.format("Should not receive this event: %s - %s - isDirectory: %s",
+                            event.getFileWatchKey(), event.getFile().getFileName(), Files.isDirectory(event.getFile())));
+        });
+        pathWatcher.watch(watchDir);
+        pathWatcher.start();
+
+        do {
+            waitSomeTime(300);
+        }  while (!pathWatcher.isRunning());
+        log.info("pathWatcher isRunning {}", pathWatcher.isRunning());
+
+        //create a new entry event for directory
+        FileWatchUtils.createDirectories(newDir);
+        waitSomeTime(PathWatcher.DELAY_QUEUE_DELAY_TIME + 100);
+
+        //cleanup
+        pathWatcher.stop();
+
+        if (Files.exists(newDir)) {
+            try {
+                Files.delete(newDir);
+                log.debug("{} deleted", newDir);
+            } catch (IOException e) {
+                //
+            }
+        }
+
+
+    }
+
 
     @Test(enabled = true, groups = "pre-test")
     public void testFileWorkerMap() throws Exception {
@@ -369,5 +531,4 @@ public class PathWatchTest {
 
 
     }
-
 }

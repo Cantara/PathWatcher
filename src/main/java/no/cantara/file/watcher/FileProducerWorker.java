@@ -19,6 +19,7 @@ public class FileProducerWorker {
     private final PathWatchScanner mode;
     private final Path dir;
     private final boolean scanForExistingFilesAtStartup;
+    private FileNativeEventsProducer fileNativeEventsProducer = null;
 
     public FileProducerWorker(PathWatchScanner mode, Path dir) {
         this(mode, dir, false);
@@ -40,7 +41,8 @@ public class FileProducerWorker {
         try {
             log.debug("[start] worker thread");
             if (PathWatchScanner.NATIVE_FILE_SYSTEM.equals(mode)) {
-                worker.execute(new FileNativeEventsProducer(producerQueue, dir, scanForExistingFilesAtStartup));
+                fileNativeEventsProducer = new FileNativeEventsProducer(producerQueue, dir, scanForExistingFilesAtStartup);
+                worker.execute(fileNativeEventsProducer);
 
             } else if (PathWatchScanner.POLL_FILE_SYSTEM.equals(mode)) {
                 worker.execute(new FilePollEventsProducer(producerQueue, dir));
@@ -71,6 +73,9 @@ public class FileProducerWorker {
             log.info("shutdown success");
         } catch (InterruptedException e) {
             log.error("shutdown failed",e);
+        }
+        if (fileNativeEventsProducer != null) {
+            fileNativeEventsProducer.shutdown();
         }
     }
 

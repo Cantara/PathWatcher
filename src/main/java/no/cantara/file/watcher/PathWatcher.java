@@ -18,7 +18,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
+import java.util.EnumSet;
 import java.util.Set;
+import java.util.stream.Stream;
 
 /**
  * Created by oranheim on 19/10/2016.
@@ -49,6 +51,16 @@ public class PathWatcher {
 
     public static long WORKER_SHUTDOWN_TIMEOUT = 150; // used in force shutdownNow hook
 
+    /**
+     * Controls the delay queue for FileCompletelyCreated event
+     */
+    public static long DELAY_QUEUE_DELAY_TIME = 5000;
+
+    /**
+     * Controls the number of retries for FileCompletelyCreated event
+     */
+    public static int DELAY_QUEUE_RETRY_NUMBER = 3;
+
     private boolean scanForExistingFilesAtStartup = false;
 
     private final EventBus fileEventBus;
@@ -69,6 +81,8 @@ public class PathWatcher {
 
     private Set<FileWatchHandler> removeHandler = Sets.newConcurrentHashSet();
 
+    private Set<FileWatchHandler> fileCompletelyCreatedHandler = Sets.newConcurrentHashSet();
+
     private PathWatchScanner pathWatchScannerMode;
 
     private boolean running;
@@ -88,6 +102,10 @@ public class PathWatcher {
         subscribe(this);
     }
 
+    /**
+     * Register a handler for a file creation event
+     * @param createdFileAction the handler for the event
+     */
     public void registerCreatedHandler(FileWatchHandler createdFileAction) {
         createHandler.add(createdFileAction);
     }
@@ -104,6 +122,10 @@ public class PathWatcher {
         return createHandler;
     }
 
+    /**
+     * Register a handler for a modification event
+     * @param modifyFileAction the handler for the event
+     */
     public void registerModifiedHandler(FileWatchHandler modifyFileAction) {
         modifyHandler.add(modifyFileAction);
     }
@@ -112,12 +134,30 @@ public class PathWatcher {
         return modifyHandler;
     }
 
+    /**
+     * Register a handler for a remove file or directory event.
+     * For native file systems wou will receive delete event for directory as well as files.
+     * @param removeFileAction the handler for the event
+     */
     public void registerRemovedHandler(FileWatchHandler removeFileAction) {
         removeHandler.add(removeFileAction);
     }
 
     public Set<FileWatchHandler> getRemoveHandlers() {
         return removeHandler;
+    }
+
+    /**
+     * Register a handler for a event indicating that a file is created and is completely written.
+     * This is only supported for native file systems
+     * @param fileCompletelyCreatedAction the handler for the event
+     */
+    public void registerFileCompletelyCreatedHandler(FileWatchHandler fileCompletelyCreatedAction) {
+        fileCompletelyCreatedHandler.add(fileCompletelyCreatedAction);
+    }
+
+    public Set<FileWatchHandler> getFileCompletelyCreatedHandlers() {
+        return fileCompletelyCreatedHandler;
     }
 
     public void forceFileSystemScannerMode(PathWatchScanner mode) {
@@ -150,15 +190,8 @@ public class PathWatcher {
 
     @Subscribe
     private synchronized void fileWatchEvent(FileWatchEvent event) {
-        if (FileWatchKey.FILE_CREATED.equals(event.getFileWatchKey())) {
+        if (event != null) {
             getFileWorkerMap().add(event.getFile(), event);
-            //log.trace("Added Created to FileWorkerMap: {}", event.toString());
-        } else if (FileWatchKey.FILE_MODIFY.equals(event.getFileWatchKey())) {
-            getFileWorkerMap().add(event.getFile(), event);
-            //log.trace("Added Modified to FileWorkerMap: {}", event.toString());
-        } else if (FileWatchKey.FILE_REMOVED.equals(event.getFileWatchKey())) {
-            getFileWorkerMap().add(event.getFile(), event);
-            //log.trace("Added Removed from FileWorkerMap: {}", event.toString());
         }
     }
 
@@ -253,6 +286,7 @@ public class PathWatcher {
             fileConsumerWorker.shutdown();
             eventWorker.shutdown();
             createHandler.clear();
+            fileCompletelyCreatedHandler.clear();
             modifyHandler.clear();
             removeHandler.clear();
             getFileWorkerMap().clear();
