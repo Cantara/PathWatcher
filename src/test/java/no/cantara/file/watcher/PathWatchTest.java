@@ -44,12 +44,6 @@ public class PathWatchTest {
         public void invoke(FileWatchEvent event) {
             Path file = event.getFile();
             log.trace("OnCreatedFileAction - Received FileWatchEvent from Consumer: {}", file);
-            try {
-                if (Files.exists(file))
-                    Files.delete(file);
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
         }
     }
 
@@ -124,6 +118,16 @@ public class PathWatchTest {
         fis.close();
 
         Thread.sleep(2500);
+
+        Files.list(inboxDir).forEach(filePath -> {
+            try {
+                Files.deleteIfExists(filePath);
+            } catch (IOException ioe) {
+                //
+            }
+        });
+
+        Thread.sleep(1000);
 
         log.trace("STOPPING..");
         pw.stop(); // blocking call
