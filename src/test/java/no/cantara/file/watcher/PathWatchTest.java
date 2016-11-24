@@ -44,6 +44,12 @@ public class PathWatchTest {
         public void invoke(FileWatchEvent event) {
             Path file = event.getFile();
             log.trace("OnCreatedFileAction - Received FileWatchEvent from Consumer: {}", file);
+            try {
+                Files.deleteIfExists(event.getFile());
+                log.trace("{} removed", event.getFile());
+            } catch (IOException io) {
+                log.trace("Failed to delete file");
+            }
         }
     }
 
@@ -284,7 +290,7 @@ public class PathWatchTest {
         fileNameList.add(slowFile.getFileName().toString());
         fileNameList.add(shortFile.getFileName().toString());
 
-        FileCompletelyCreatedHandler handler = new FileCompletelyCreatedHandler(fileNameList);
+        FileCreatedEventHandler handler = new FileCreatedEventHandler(FileWatchKey.FILE_COMPLETELY_CREATED, fileNameList);
         pathWatcher.registerFileCompletelyCreatedHandler(handler);
         pathWatcher.watch(watchDir);
         pathWatcher.start();
@@ -320,6 +326,80 @@ public class PathWatchTest {
         }
     }
 
+    @Test(enabled=true)
+    public void testReportExistingFilesAtStartup() throws IOException {
+        if (FileSystemSupport.isMacOS()) {
+            log.info("Native test not possible to run on mac os");
+            return;
+        }
+
+        Path currentDir = FileWatchUtils.getCurrentPath();
+        Path watchDir = currentDir.resolve("target/watcher/inbox");
+        Path file1 = watchDir.resolve("abc.txt");
+        Path file2 = watchDir.resolve("def.txt");
+        Path file3 = watchDir.resolve("ghi.txt");
+        FileWatchUtils.createDirectories(watchDir) ;
+
+        FileOutputStream fos = new FileOutputStream(file1.toFile());
+        fos.write("Content of file".getBytes());
+        fos.close();
+
+        fos = new FileOutputStream(file2.toFile());
+        fos.write("Content of file".getBytes());
+        fos.close();
+
+        fos = new FileOutputStream(file3.toFile());
+        fos.write("Content of file".getBytes());
+        fos.close();
+
+        List<String> fileNameList = new ArrayList<>();
+        fileNameList.add(file1.getFileName().toString());
+        fileNameList.add(file2.getFileName().toString());
+        fileNameList.add(file3.getFileName().toString());
+
+        FileCreatedEventHandler fileCompletelyCreatedHandler = new FileCreatedEventHandler(FileWatchKey.FILE_COMPLETELY_CREATED, fileNameList);
+        FileCreatedEventHandler fileCreatedHandler = new FileCreatedEventHandler(FileWatchKey.FILE_CREATED, fileNameList);
+
+        PathWatcher pathWatcher = PathWatcher.getInstance();
+        pathWatcher.setScanForExistingFilesAtStartup(true);
+        pathWatcher.registerFileCompletelyCreatedHandler(fileCompletelyCreatedHandler);
+        pathWatcher.registerCreatedHandler(fileCreatedHandler);
+        pathWatcher.watch(watchDir);
+        pathWatcher.start();
+
+        do {
+            waitSomeTime(300);
+        }  while (!pathWatcher.isRunning());
+        log.info("pathWatcher isRunning {}", pathWatcher.isRunning());
+
+        waitSomeTime(3000);  // wait for message to get through the delay queue
+        //cleanup
+        pathWatcher.stop();
+
+        Files.list(watchDir).forEach(filePath -> {
+            try {
+                Files.deleteIfExists(filePath);
+            } catch (IOException ioe) {
+                //
+            }
+        });
+
+        String errorString = "";
+        int numberOfErrors = 0;
+        if (fileCompletelyCreatedHandler.isTestFailed()) {
+            errorString = fileCompletelyCreatedHandler.getErrorMessages().stream().collect(Collectors.joining("\n"));
+            numberOfErrors += fileCompletelyCreatedHandler.getErrorMessages().size();
+        }
+        if (fileCreatedHandler.isTestFailed()) {
+            errorString += "\n";
+            errorString += fileCreatedHandler.getErrorMessages().stream().collect(Collectors.joining("\n"));
+            numberOfErrors += fileCreatedHandler.getErrorMessages().size();
+        }
+        if (numberOfErrors > 0) {
+            fail(String.format("Test failed with %s errors:\n %s", numberOfErrors, errorString));
+        }
+    }
+
     private void waitSomeTime(long waitingTime) {
         try {
             Thread.sleep(waitingTime);
@@ -328,19 +408,24 @@ public class PathWatchTest {
         }
     }
 
-    private static class FileCompletelyCreatedHandler implements FileWatchHandler {
+    private static class FileCreatedEventHandler implements FileWatchHandler {
         private List<String> errorMessages = new ArrayList<>();
         private ArrayList<String> expectedFileNames;
         private boolean notAllFilesReceivedErrorAdded = false;
+        private FileWatchKey fileWatchKey;
 
-        FileCompletelyCreatedHandler(List<String> expectedFileNames) {
-            this.expectedFileNames =(ArrayList) expectedFileNames;
+        FileCreatedEventHandler(FileWatchKey fileWatchKey, List<String> expectedFileNames) {
+            this.expectedFileNames = new ArrayList<>(expectedFileNames);
+            this.fileWatchKey = fileWatchKey;
         }
 
         boolean isTestFailed() {
             return !errorMessages.isEmpty() || !expectedFileNames.isEmpty();
         }
 
+        int getNumbersOfErrors() {
+            return errorMessages.size();
+        }
         List<String> getErrorMessages() {
             if (!expectedFileNames.isEmpty() && !notAllFilesReceivedErrorAdded) {
                 errorMessages.add(String.format("Events for all files was not received: %s", expectedFileNames.toString()));
@@ -353,6 +438,9 @@ public class PathWatchTest {
         public void invoke(FileWatchEvent event) {
             log.info("Received event; {}", event);
             Path eventFile = event.getFile();
+            if (!fileWatchKey.equals(event.getFileWatchKey())) {
+                errorMessages.add(String.format("Unexpected FileWatchKey received. Expected %s received %s", fileWatchKey, event.getFileWatchKey()));
+            }
             if (! expectedFileNames.contains(eventFile.getFileName().toString() )) {
                 errorMessages.add(String.format("Received unexpected event %s", eventFile.getFileName().toString()));
             } else {
@@ -361,7 +449,7 @@ public class PathWatchTest {
             if (!Files.exists(eventFile)) {
                 errorMessages.add(String.format("File doesn't exist %s", eventFile.toString()));
             }
-            if (! CommonUtil.isFileCompletelyWritten(eventFile.toFile())) {
+            if (  fileWatchKey.equals(FileWatchKey.FILE_COMPLETELY_CREATED) &&  ! CommonUtil.isFileCompletelyWritten(eventFile.toFile())) {
                 errorMessages.add(String.format("%s is not completely written as expected",eventFile));
             }
         }
