@@ -14,32 +14,44 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.nio.file.attribute.FileTime;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.DelayQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 /**
  * Created by oranheim on 19/10/2016.
  */
-public class FilePollEventsProducer implements Runnable {
+public class FilePollEventsProducer implements FileEventsProducer {
 
     private final static Logger log = LoggerFactory.getLogger(FilePollEventsProducer.class);
 
-    private final BlockingQueue queue;
+    private final BlockingQueue<FileWatchEvent> queue;
+
     private final Path dir;
+
+    private ExecutorService executorService;
+
+    private final BlockingQueue<DelayedFileWatchEvent> delayQueue;
+
+    private DelayedFileCompletelyCreatedProducer delayedFileCompletelyCreatedProducer;
+
 
     public FilePollEventsProducer(BlockingQueue queue, Path dir) {
         this.queue = queue;
         this.dir = dir;
+        this.delayQueue = new DelayQueue<>();
+        delayedFileCompletelyCreatedProducer = new DelayedFileCompletelyCreatedProducer(delayQueue, this.queue);
     }
 
     @Override
     public void run() {
+        createDelayedEventConsumer();
         boolean hasRunOnce = false;
-        for( ; ; ) {
+        for (; ; ) {
             try {
                 //log.trace("-> scan directory: {}", dir);
                 Runnable r = this;
@@ -58,10 +70,9 @@ public class FilePollEventsProducer implements Runnable {
                 //log.trace("hasRunOnce: {}", hasRunOnce);
                 if (hasRunOnce) {
                     ImmutableList<Path> discoveredFileSet = PathWatcher.getInstance().getFileWorkerMap().keySet();
-                    Iterator<Path> it = discoveredFiles.keySet().iterator();
 
                     //log.trace("Size: {} hasNext={}", discoveredFileSet.size(), discoveredFileSet.get(0));
-                    for(int n = 0; n<discoveredFileSet.size(); n++) {
+                    for (int n = 0; n < discoveredFileSet.size(); n++) {
                         Path file = discoveredFileSet.get(n);
                         //log.trace("Compare '{}' with '{}'", file, discoveredFiles.get(file));
                         if (discoveredFiles.keySet().contains(file)) {
@@ -74,7 +85,8 @@ public class FilePollEventsProducer implements Runnable {
                             if (!PathWatcher.getInstance().getFileWorkerMap().checkState(file, FileWatchKey.FILE_REMOVED)) {
                                 FileWatchEvent event = PathWatcher.getInstance().getFileWorkerMap().getFile(file);
                                 if (event != null) {
-                                    FileWatchEvent fileWatchEvent = new FileWatchEvent(file, FileWatchKey.FILE_REMOVED, event.getFileWatchState(), event.getAttrs()); //  verify that we don't return discovered. use the latest state in map
+                                    FileWatchEvent fileWatchEvent = new FileWatchEvent(file, FileWatchKey.FILE_REMOVED, event.getFileWatchState(),
+                                            event.getAttrs()); //  verify that we don't return discovered. use the latest state in map
                                     PathWatcher.getInstance().post(fileWatchEvent);
                                     queue.put(fileWatchEvent);
                                     log.trace("Discovery - Produced: [{}]{}", fileWatchEvent.getFileWatchKey(), file);
@@ -89,17 +101,17 @@ public class FilePollEventsProducer implements Runnable {
                     try {
                         Path file = entry.getKey();
                         BasicFileAttributes attrs = entry.getValue();
-                        Path filename = file.getFileName();
-                        FileTime creationTime = attrs.creationTime();
 
                         // check if file is already discovered
                         if (!PathWatcher.getInstance().getFileWorkerMap().checkState(file, FileWatchState.DISOCVERED)) {
+
 
                             // add file to event
                             FileWatchEvent fileWatchEvent = new FileWatchEvent(file, FileWatchKey.FILE_CREATED, FileWatchState.DISOCVERED, attrs);
                             PathWatcher.getInstance().post(fileWatchEvent);
                             queue.put(fileWatchEvent);
                             log.trace("Discovery - Produced: [{}]{}", fileWatchEvent.getFileWatchKey(), file);
+                            delayedFileCompletelyCreatedProducer.createFileCompletelyCreatedEvent(file, attrs);
                         } else {
 
                             if (!PathWatcher.getInstance().getFileWorkerMap().checkState(file, FileWatchKey.FILE_MODIFY)) {
@@ -107,7 +119,8 @@ public class FilePollEventsProducer implements Runnable {
                                 BasicFileAttributes newAttrs = Files.readAttributes(file, BasicFileAttributes.class);
                                 // we have a modiefied state
                                 if (!attrs.equals(newAttrs)) {
-                                    FileWatchEvent fileWatchEvent = new FileWatchEvent(file, FileWatchKey.FILE_MODIFY, event.getFileWatchState(), newAttrs); //  verify that we don't return discovered. use the latest state in map
+                                    FileWatchEvent fileWatchEvent = new FileWatchEvent(file, FileWatchKey.FILE_MODIFY, event.getFileWatchState(),
+                                            newAttrs); //  verify that we don't return discovered. use the latest state in map
                                     PathWatcher.getInstance().post(fileWatchEvent);
                                     queue.put(fileWatchEvent);
                                     log.trace("Discovery - Produced: [{}]{}", fileWatchEvent.getFileWatchKey(), file);
@@ -128,11 +141,12 @@ public class FilePollEventsProducer implements Runnable {
                     } catch (IOException e) {
                         e.printStackTrace();
                     }
-
                 });
 
                 hasRunOnce = true;
-                if (PathWatcher.SCAN_DIRECTORY_INTERVAL == -1) break;
+                if (PathWatcher.SCAN_DIRECTORY_INTERVAL == -1) {
+                    break;
+                }
                 TimeUnit.MILLISECONDS.sleep(PathWatcher.SCAN_DIRECTORY_INTERVAL);
             } catch (IOException e) {
                 log.error("FileProducer: {}", e);
@@ -143,6 +157,23 @@ public class FilePollEventsProducer implements Runnable {
                 PathWatcher.getInstance().post(new PathWatchInternalEvent(this, "FileProducer got interrupted"));
                 log.trace("FileProducer has ended!");
             }
+        }
+    }
+
+    private void createDelayedEventConsumer() {
+        executorService = Executors.newSingleThreadExecutor();
+        executorService.execute(new DelayedFileCompletelyCreatedConsumer(delayQueue, queue));
+    }
+
+    public void shutdown() {
+        executorService.shutdown();
+        try {
+            if (!executorService.awaitTermination(PathWatcher.WORKER_SHUTDOWN_TIMEOUT, TimeUnit.MILLISECONDS)) {
+                executorService.shutdownNow();
+            }
+            log.info("shutdown success");
+        } catch (InterruptedException e) {
+            log.error("shutdown failed", e);
         }
     }
 }

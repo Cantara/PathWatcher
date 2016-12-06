@@ -12,7 +12,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.util.Iterator;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
@@ -25,7 +24,9 @@ public class FilePollEventsConsumer implements Runnable {
     private final static Logger log = LoggerFactory.getLogger(FilePollEventsConsumer.class);
 
     private final FileDetermineCompletionWorker fileDetermineCompletionWorker;
+
     private final BlockingQueue queue;
+
     private final Path dir;
 
     public FilePollEventsConsumer(FileDetermineCompletionWorker fileDetermineCompletionWorker, BlockingQueue queue, Path dir) {
@@ -36,14 +37,15 @@ public class FilePollEventsConsumer implements Runnable {
 
     @Override
     public void run() {
-        for( ; ; ) {
+        for (; ; ) {
             try {
                 FileWatchEvent event = (FileWatchEvent) queue.take();
                 log.trace("Consumed: [{}]{} and check if it is available", event.getFileWatchKey(), event);
 
                 if (FileWatchKey.FILE_CREATED.equals(event.getFileWatchKey())) {
                     try {
-                        fileDetermineCompletionWorker.execute(event.getFile(), PathWatcher.POLL_INTERVAL, PathWatcher.FILE_COMPLETION_MODE, PathWatcher.FILE_COMPLETION_TIMEOUT_OR_RETRIES);
+                        fileDetermineCompletionWorker
+                                .execute(event.getFile(), PathWatcher.POLL_INTERVAL, PathWatcher.FILE_COMPLETION_MODE, PathWatcher.FILE_COMPLETION_TIMEOUT_OR_RETRIES);
                     } catch (RejectedExecutionException e) {
                         // todo: at this point this error occurs when the PathWatcher is shutdown. do nothing
                         break;
@@ -59,16 +61,7 @@ public class FilePollEventsConsumer implements Runnable {
                         PathWatcher.getInstance().post(fileWatchEvent);
 
                         Set<FileWatchHandler> actions = PathWatcher.getInstance().getCreateHandlers();
-                        Iterator<FileWatchHandler> it = actions.iterator();
-                        while (it.hasNext()) {
-                            FileWatchHandler action = it.next();
-                            try {
-                                action.invoke(fileWatchEvent);
-                            } catch (Exception e) {
-                                log.error("Created handler exception:\n{}", e);
-                            }
-                        }
-
+                        invokeHandlers(fileWatchEvent, actions);
                     } else {
                         // todo: dead letter handling here
                         BasicFileAttributes attrs;
@@ -80,37 +73,20 @@ public class FilePollEventsConsumer implements Runnable {
                         FileWatchEvent fileWatchEvent = new FileWatchEvent(event.getFile(), event.getFileWatchKey(), FileWatchState.INCOMPLETE, attrs);
                         PathWatcher.getInstance().post(fileWatchEvent);
                     }
+                } else if (FileWatchKey.FILE_COMPLETELY_CREATED.equals(event.getFileWatchKey())) {
+                    PathWatcher.getInstance().post(event);
+                    Set<FileWatchHandler> actions = PathWatcher.getInstance().getFileCompletelyCreatedHandlers();
+                    invokeHandlers(event, actions);
                 } else if (FileWatchKey.FILE_MODIFY.equals(event.getFileWatchKey())) {
-
                     PathWatcher.getInstance().post(event);
                     Set<FileWatchHandler> actions = PathWatcher.getInstance().getModifyHandlers();
-                    Iterator<FileWatchHandler> it = actions.iterator();
-                    while (it.hasNext()) {
-                        FileWatchHandler action = it.next();
-                        try {
-                            action.invoke(event);
-                        } catch (Exception e) {
-                            log.error("Modify handler exception:\n{}", e);
-                        }
-                    }
-
+                    invokeHandlers(event, actions);
                 } else if (FileWatchKey.FILE_REMOVED.equals(event.getFileWatchKey())) {
-
                     PathWatcher.getInstance().post(event);
                     Set<FileWatchHandler> actions = PathWatcher.getInstance().getRemoveHandlers();
-                    Iterator<FileWatchHandler> it = actions.iterator();
-                    while (it.hasNext()) {
-                        FileWatchHandler action = it.next();
-                        try {
-                            action.invoke(event);
-                        } catch (Exception e) {
-                            log.error("Removed handler exception:\n{}", e);
-                        }
-                    }
-
+                    invokeHandlers(event, actions);
                     PathWatcher.getInstance().getFileWorkerMap().remove(event.getFile());
                 }
-
             } catch (InterruptedException e) {
                 //e.printStackTrace();
                 PathWatcher.getInstance().post(new PathWatchInternalEvent(this, "FileConsumer got interrupted"));
@@ -118,6 +94,16 @@ public class FilePollEventsConsumer implements Runnable {
             } catch (IOException e) {
                 //e.printStackTrace();
                 log.error("FileConsumer failed: \n{}", e);
+            }
+        }
+    }
+
+    private void invokeHandlers(FileWatchEvent fileWatchEvent, Set<FileWatchHandler> actions) {
+        for (FileWatchHandler action : actions) {
+            try {
+                action.invoke(fileWatchEvent);
+            } catch (Exception e) {
+                log.error("Handler exception from event type {}:\n{}", fileWatchEvent.getFileWatchKey().toString(), e);
             }
         }
     }

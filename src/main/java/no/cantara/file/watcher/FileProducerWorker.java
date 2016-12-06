@@ -5,7 +5,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
-import java.util.concurrent.*;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Created by oranheim on 20/10/2016.
@@ -15,11 +19,16 @@ public class FileProducerWorker {
     private static Logger log = LoggerFactory.getLogger(FileProducerWorker.class);
 
     protected static ExecutorService worker;
+
     private final BlockingQueue producerQueue;
+
     private final PathWatchScanner mode;
+
     private final Path dir;
+
     private final boolean scanForExistingFilesAtStartup;
-    private FileNativeEventsProducer fileNativeEventsProducer = null;
+
+    private FileEventsProducer fileEventsProducer;
 
     public FileProducerWorker(PathWatchScanner mode, Path dir) {
         this(mode, dir, false);
@@ -41,12 +50,11 @@ public class FileProducerWorker {
         try {
             log.debug("[start] worker thread");
             if (PathWatchScanner.NATIVE_FILE_SYSTEM.equals(mode)) {
-                fileNativeEventsProducer = new FileNativeEventsProducer(producerQueue, dir, scanForExistingFilesAtStartup);
-                worker.execute(fileNativeEventsProducer);
-
+                fileEventsProducer = new FileNativeEventsProducer(producerQueue, dir, scanForExistingFilesAtStartup);
+                worker.execute(fileEventsProducer);
             } else if (PathWatchScanner.POLL_FILE_SYSTEM.equals(mode)) {
-                worker.execute(new FilePollEventsProducer(producerQueue, dir));
-
+                fileEventsProducer = new FilePollEventsProducer(producerQueue, dir);
+                worker.execute(fileEventsProducer);
             } else {
                 throw new UnsupportedOperationException("Unknown FileSystem");
             }
@@ -72,12 +80,10 @@ public class FileProducerWorker {
             }
             log.info("shutdown success");
         } catch (InterruptedException e) {
-            log.error("shutdown failed",e);
+            log.error("shutdown failed", e);
         }
-        if (fileNativeEventsProducer != null) {
-            fileNativeEventsProducer.shutdown();
+        if (fileEventsProducer != null) {
+            fileEventsProducer.shutdown();
         }
     }
-
-
 }
