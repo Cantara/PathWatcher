@@ -272,12 +272,7 @@ public class PathWatchTest {
     }
 
     @Test(enabled=true)
-    public void testNativeFileCompletelyCreated() throws IOException {
-        if (FileSystemSupport.isMacOS()) {
-            log.info("Native test not possible to run on mac os");
-            return;
-        }
-
+    public void testFileCompletelyCreated() throws IOException {
         String fileName = "veryLargeFile.txt";
         Path currentDir = FileWatchUtils.getCurrentPath();
         Path watchDir = currentDir.resolve("target/watcher/inbox");
