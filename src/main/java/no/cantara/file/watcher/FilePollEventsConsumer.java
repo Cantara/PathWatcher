@@ -42,7 +42,7 @@ public class FilePollEventsConsumer implements Runnable {
                 FileWatchEvent event = (FileWatchEvent) queue.take();
                 log.trace("Consumed: [{}]{} and check if it is available", event.getFileWatchKey(), event);
 
-                if (FileWatchKey.FILE_CREATED.equals(event.getFileWatchKey())) {
+                if (FileWatchKey.FILE_CREATED.equals(event.getFileWatchKey()) || FileWatchKey.FILE_COMPLETELY_CREATED.equals(event.getFileWatchKey())) {
                     try {
                         fileDetermineCompletionWorker
                                 .execute(event.getFile(), PathWatcher.POLL_INTERVAL, PathWatcher.FILE_COMPLETION_MODE, PathWatcher.FILE_COMPLETION_TIMEOUT_OR_RETRIES);
@@ -60,7 +60,10 @@ public class FilePollEventsConsumer implements Runnable {
                         FileWatchEvent fileWatchEvent = new FileWatchEvent(event.getFile(), event.getFileWatchKey(), FileWatchState.COMPLETED, attrs);
                         PathWatcher.getInstance().post(fileWatchEvent);
 
-                        Set<FileWatchHandler> actions = PathWatcher.getInstance().getCreateHandlers();
+                        Set<FileWatchHandler> actions = FileWatchKey.FILE_CREATED.equals(event.getFileWatchKey())
+                                ? PathWatcher.getInstance().getCreateHandlers()
+                                : PathWatcher.getInstance().getFileCompletelyCreatedHandlers();
+
                         invokeHandlers(fileWatchEvent, actions);
                     } else {
                         // todo: dead letter handling here
@@ -73,10 +76,6 @@ public class FilePollEventsConsumer implements Runnable {
                         FileWatchEvent fileWatchEvent = new FileWatchEvent(event.getFile(), event.getFileWatchKey(), FileWatchState.INCOMPLETE, attrs);
                         PathWatcher.getInstance().post(fileWatchEvent);
                     }
-                } else if (FileWatchKey.FILE_COMPLETELY_CREATED.equals(event.getFileWatchKey())) {
-                    PathWatcher.getInstance().post(event);
-                    Set<FileWatchHandler> actions = PathWatcher.getInstance().getFileCompletelyCreatedHandlers();
-                    invokeHandlers(event, actions);
                 } else if (FileWatchKey.FILE_MODIFY.equals(event.getFileWatchKey())) {
                     PathWatcher.getInstance().post(event);
                     Set<FileWatchHandler> actions = PathWatcher.getInstance().getModifyHandlers();
@@ -90,7 +89,7 @@ public class FilePollEventsConsumer implements Runnable {
             } catch (InterruptedException e) {
                 //e.printStackTrace();
                 PathWatcher.getInstance().post(new PathWatchInternalEvent(this, "FileConsumer got interrupted"));
-                log.trace("FileConsumer has ended!");
+                log.trace("FileConsumer has ended! {}", e);
             } catch (IOException e) {
                 //e.printStackTrace();
                 log.error("FileConsumer failed: \n{}", e);

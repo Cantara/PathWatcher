@@ -17,9 +17,6 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.DelayQueue;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -33,23 +30,13 @@ public class FilePollEventsProducer implements FileEventsProducer {
 
     private final Path dir;
 
-    private ExecutorService executorService;
-
-    private final BlockingQueue<DelayedFileWatchEvent> delayQueue;
-
-    private DelayedFileCompletelyCreatedProducer delayedFileCompletelyCreatedProducer;
-
-
     public FilePollEventsProducer(BlockingQueue queue, Path dir) {
         this.queue = queue;
         this.dir = dir;
-        this.delayQueue = new DelayQueue<>();
-        delayedFileCompletelyCreatedProducer = new DelayedFileCompletelyCreatedProducer(delayQueue, this.queue);
     }
 
     @Override
     public void run() {
-        createDelayedEventConsumer();
         boolean hasRunOnce = false;
         for (; ; ) {
             try {
@@ -104,16 +91,16 @@ public class FilePollEventsProducer implements FileEventsProducer {
 
                         // check if file is already discovered
                         if (!PathWatcher.getInstance().getFileWorkerMap().checkState(file, FileWatchState.DISOCVERED)) {
-
-
                             // add file to event
                             FileWatchEvent fileWatchEvent = new FileWatchEvent(file, FileWatchKey.FILE_CREATED, FileWatchState.DISOCVERED, attrs);
                             PathWatcher.getInstance().post(fileWatchEvent);
                             queue.put(fileWatchEvent);
                             log.trace("Discovery - Produced: [{}]{}", fileWatchEvent.getFileWatchKey(), file);
-                            delayedFileCompletelyCreatedProducer.createFileCompletelyCreatedEvent(file, attrs);
+                            //On poll based systems the file_created and file_completely_created are the same..
+                            FileWatchEvent fileCompletelyCreatedWatchEvent = new FileWatchEvent(file, FileWatchKey.FILE_COMPLETELY_CREATED, FileWatchState.DISOCVERED, attrs);
+                            PathWatcher.getInstance().post(fileCompletelyCreatedWatchEvent);
+                            queue.put(fileCompletelyCreatedWatchEvent);
                         } else {
-
                             if (!PathWatcher.getInstance().getFileWorkerMap().checkState(file, FileWatchKey.FILE_MODIFY)) {
                                 FileWatchEvent event = PathWatcher.getInstance().getFileWorkerMap().getFile(file);
                                 BasicFileAttributes newAttrs = Files.readAttributes(file, BasicFileAttributes.class);
@@ -160,20 +147,7 @@ public class FilePollEventsProducer implements FileEventsProducer {
         }
     }
 
-    private void createDelayedEventConsumer() {
-        executorService = Executors.newSingleThreadExecutor();
-        executorService.execute(new DelayedFileCompletelyCreatedConsumer(delayQueue, queue));
-    }
-
+    @Override
     public void shutdown() {
-        executorService.shutdown();
-        try {
-            if (!executorService.awaitTermination(PathWatcher.WORKER_SHUTDOWN_TIMEOUT, TimeUnit.MILLISECONDS)) {
-                executorService.shutdownNow();
-            }
-            log.info("shutdown success");
-        } catch (InterruptedException e) {
-            log.error("shutdown failed", e);
-        }
     }
 }
