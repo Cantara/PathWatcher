@@ -29,7 +29,7 @@ public class PathWatchTest {
 
     private final static Logger log = LoggerFactory.getLogger(PathWatchTest.class);
 
-    @Test(enabled = true)
+    @Test()
     public void testFileSystem() {
         log.trace("IsLinux: {}, isLinuxFileSystem: {}, isMacOS: {}, isMacOSFileSystem: {}",
                 FileSystemSupport.isLinux(),
@@ -69,7 +69,7 @@ public class PathWatchTest {
         }
     }
 
-    @Test(enabled = true, dependsOnGroups = "pre-test")
+    @Test(dependsOnGroups = "pre-test")
     public void testNativeEventsPathWatch() throws Exception {
         if (FileSystemSupport.isMacOS()) return;
 
@@ -84,7 +84,7 @@ public class PathWatchTest {
         execPathWatchTest(pw, inboxDir);
     }
 
-    @Test(enabled = true, dependsOnGroups = "pre-test")
+    @Test(dependsOnGroups = "pre-test")
     public void testPollEventsPathWatch() throws Exception {
         Path currentDir = FileWatchUtils.getCurrentPath();
         Path storeDir = currentDir.resolve("target/watcher");
@@ -141,7 +141,7 @@ public class PathWatchTest {
 
     }
 
-    @Test(enabled = true, groups = "pre-test")
+    @Test(groups = "pre-test")
     public void testCreateUniqueMapToHandleMultipleDiscoveriesOfFiles() throws Exception {
         Multimap<String,String> map =  ArrayListMultimap.create();
 
@@ -271,7 +271,7 @@ public class PathWatchTest {
         }
     }
 
-    @Test(enabled=true)
+    @Test()
     public void testFileCompletelyCreated() throws IOException {
         String fileName = "veryLargeFile.txt";
         Path currentDir = FileWatchUtils.getCurrentPath();
@@ -321,7 +321,7 @@ public class PathWatchTest {
         }
     }
 
-    @Test(enabled=true)
+    @Test()
     public void testReportExistingFilesAtStartup() throws IOException {
         if (FileSystemSupport.isMacOS()) {
             log.info("Native test not possible to run on mac os");
@@ -496,7 +496,7 @@ public class PathWatchTest {
     }
 
 
-    @Test(enabled = true, groups = "pre-test")
+    @Test(groups = "pre-test")
     public void testFileWorkerMap() throws Exception {
         FileWorkerMap fileWorkerMap = new FileWorkerMap();
 
