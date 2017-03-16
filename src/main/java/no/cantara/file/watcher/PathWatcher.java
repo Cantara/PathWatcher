@@ -11,16 +11,13 @@ import no.cantara.file.watcher.event.FileWatchEvent;
 import no.cantara.file.watcher.event.PathWatchInternalEvent;
 import no.cantara.file.watcher.support.FileCompletionWorkerMode;
 import no.cantara.file.watcher.support.FileWatchHandler;
-import no.cantara.file.watcher.support.FileWatchKey;
 import no.cantara.file.watcher.support.FileWorkerMap;
 import no.cantara.file.watcher.support.PathWatchScanner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
-import java.util.EnumSet;
 import java.util.Set;
-import java.util.stream.Stream;
 
 /**
  * Created by oranheim on 19/10/2016.
@@ -67,13 +64,13 @@ public class PathWatcher {
 
     private FileWorkerMap fileWorkerMap;
 
-    private Path watchDir;
+    private Set<Path> watchDirs = Sets.newConcurrentHashSet();
 
     private EventWorker eventWorker;
 
-    private FileProducerWorker fileProducerWorker;
+    private Set<FileProducerWorker> fileProducerWorkers = Sets.newConcurrentHashSet();
 
-    private FileConsumerWorker fileConsumerWorker;
+    private Set<FileConsumerWorker> fileConsumerWorkers = Sets.newConcurrentHashSet();
 
     private Set<FileWatchHandler> createHandler = Sets.newConcurrentHashSet();
 
@@ -235,22 +232,48 @@ public class PathWatcher {
     }
 
     public boolean isRunning() {
-        return ((fileProducerWorker != null || fileConsumerWorker != null) ? (fileProducerWorker.isRunning() || fileConsumerWorker.isRunning()) : false);
+        boolean isRunning = false;
+        if ((fileProducerWorkers != null || fileConsumerWorkers != null)) {
+            for (FileProducerWorker fileProducerWorker : fileProducerWorkers) {
+                if (fileProducerWorker.isRunning()) {
+                    isRunning = true;
+                }
+            }
+            for (FileConsumerWorker fileConsumerWorker : fileConsumerWorkers) {
+                if (fileConsumerWorker.isRunning()) {
+                    isRunning = true;
+                }
+            }
+        }
+        return isRunning;
     }
 
     public boolean isInterrupted() {
-        return ((fileProducerWorker != null || fileConsumerWorker != null) ? (fileProducerWorker.isTerminated() || fileConsumerWorker.isTerminated()) : false);
+        boolean isTerminated = false;
+        if ((fileProducerWorkers != null || fileConsumerWorkers != null)) {
+            for (FileProducerWorker fileProducerWorker : fileProducerWorkers) {
+                if (fileProducerWorker.isTerminated()) {
+                    isTerminated = true;
+                }
+            }
+            for (FileConsumerWorker fileConsumerWorker : fileConsumerWorkers) {
+                if (fileConsumerWorker.isTerminated()) {
+                    isTerminated = true;
+                }
+            }
+        }
+        return isTerminated;
     }
 
     public void watch(Path directory) {
         log.trace("Watch directory: {}", directory);
-        watchDir = directory;
+        watchDirs.add(directory);
     }
 
     public String getConfigInfo() {
         JsonObject json = new JsonObject();
         json.addProperty("pathWatchScannerMode", pathWatchScannerMode.toString());
-        json.addProperty("watchDir", watchDir.toString());
+        json.addProperty("watchDirs", watchDirs.toString());
         if (isPollEvents()) {
             json.addProperty("workerMode", FILE_COMPLETION_MODE.toString());
             json.addProperty("scanInterval", SCAN_DIRECTORY_INTERVAL);
@@ -266,12 +289,18 @@ public class PathWatcher {
     public void start() {
         if (!isRunning()) {
             eventWorker = new EventWorker();
-            fileProducerWorker = new FileProducerWorker(pathWatchScannerMode, watchDir, scanForExistingFilesAtStartup);
-            fileConsumerWorker = new FileConsumerWorker(pathWatchScannerMode, fileProducerWorker.getQueue(), watchDir);
-
+            for (Path directory : watchDirs) {
+                FileProducerWorker fileProducerWorker = new FileProducerWorker(pathWatchScannerMode, directory, scanForExistingFilesAtStartup);
+                fileProducerWorkers.add(fileProducerWorker);
+                fileConsumerWorkers.add(new FileConsumerWorker(pathWatchScannerMode, fileProducerWorker.getQueue(), directory));
+            }
             eventWorker.start();
-            fileConsumerWorker.start();
-            fileProducerWorker.start();
+            for (FileProducerWorker fileProducerWorker : fileProducerWorkers) {
+                fileProducerWorker.start();
+            }
+            for (FileConsumerWorker fileConsumerWorker : fileConsumerWorkers) {
+                fileConsumerWorker.start();
+            }
 
             running = true;
             log.trace("PathWatcher is started with configuration:\n{}", getConfigInfo());
@@ -282,8 +311,12 @@ public class PathWatcher {
 
     public void stop() {
         if (isRunning()) {
-            fileProducerWorker.shutdown();
-            fileConsumerWorker.shutdown();
+            for (FileProducerWorker fileProducerWorker : fileProducerWorkers) {
+                fileProducerWorker.shutdown();
+            }
+            for (FileConsumerWorker fileConsumerWorker : fileConsumerWorkers) {
+                fileConsumerWorker.shutdown();
+            }
             eventWorker.shutdown();
             createHandler.clear();
             fileCompletelyCreatedHandler.clear();
