@@ -3,7 +3,7 @@
     <groupId>no.cantara.pathwatcher</groupId>
     <artifactId>pathwatch</artifactId>
     <packaging>jar</packaging>
-    <version>1.24-SNAPSHOT</version>
+    <version>1.24</version>
     <url>https://wiki.cantara.no/</url>
 
     <developers>
@@ -34,7 +34,7 @@
         </developerConnection>
         <connection>scm:git:https://github.com/Cantara/PathWatcher.git</connection>
         <url>https://wiki.cantara.no/</url>
-        <tag>HEAD</tag>
+        <tag>pathwatch-1.24</tag>
     </scm>
 
     <properties>
