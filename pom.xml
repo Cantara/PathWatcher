@@ -47,20 +47,20 @@
         <repository>
             <id>osgeo-releases</id>
             <name>osgeo Repository</name>
-            <url>http://download.osgeo.org/webdav/geotools/</url>
+            <url>https://download.osgeo.org/webdav/geotools/</url>
         </repository>
 
         <!-- Needed for parent  -->
         <repository>
             <id>cantara-releases</id>
             <name>Cantara Release Repository</name>
-            <url>http://mvnrepo.cantara.no/content/repositories/releases/</url>
+            <url>https://mvnrepo.cantara.no/content/repositories/releases/</url>
         </repository>
         <!-- Needed for SDK snapshots  -->
         <repository>
             <id>cantara-snapshots</id>
             <name>Cantara Snapshot Repository</name>
-            <url>http://mvnrepo.cantara.no/content/repositories/snapshots/</url>
+            <url>https://mvnrepo.cantara.no/content/repositories/snapshots/</url>
         </repository>
     </repositories>
 
