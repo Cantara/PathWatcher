@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PathWatcher — act on files the moment they've finished landing</title>
+<meta name="description" content="PathWatcher is a JVM library that watches a directory for created, modified and removed files — and tells you when a file is completely written, so you never process a half-finished upload. Native events, polling on macOS, Java 8+.">
+<style>
+  :root {
+    --ground: #f7f8fb;
+    --surface: #ffffff;
+    --surface-2: #eef1f6;
+    --ink: #1a1f2b;
+    --ink-soft: #414a5a;
+    --muted: #697386;
+    --line: #e0e4ec;
+    --line-strong: #c9d0dc;
+    --accent: #b6702a;
+    --accent-ink: #a1611f;
+    --accent-contrast: #ffffff;
+    --code-bg: #141019;
+    --code-ink: #e6ddf0;
+
+    --st-disc: #6b7a8d;
+    --st-inc: #3f7ad1;
+    --st-done: #2f9e4a;
+
+    --maxw: 1120px;
+    --radius: 14px;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #121016;
+      --surface: #1b1822;
+      --surface-2: #221e2c;
+      --ink: #efe9f2;
+      --ink-soft: #cabfd0;
+      --muted: #9b8fa6;
+      --line: #2c2636;
+      --line-strong: #3d3549;
+      --accent: #f2b45c;
+      --accent-ink: #f6c67e;
+      --accent-contrast: #2a1c07;
+      --code-bg: #0d0a12;
+      --code-ink: #e6ddf0;
+      --st-disc: #8595a8;
+      --st-inc: #62a0f0;
+      --st-done: #3fb950;
+    }
+  }
+  :root[data-theme="light"] {
+    --ground: #f7f8fb; --surface: #ffffff; --surface-2: #eef1f6; --ink: #1a1f2b;
+    --ink-soft: #414a5a; --muted: #697386; --line: #e0e4ec; --line-strong: #c9d0dc;
+    --accent: #b6702a; --accent-ink: #a1611f; --accent-contrast: #ffffff;
+    --code-bg: #141019; --code-ink: #e6ddf0;
+    --st-disc: #6b7a8d; --st-inc: #3f7ad1; --st-done: #2f9e4a;
+  }
+  :root[data-theme="dark"] {
+    --ground: #121016; --surface: #1b1822; --surface-2: #221e2c; --ink: #efe9f2;
+    --ink-soft: #cabfd0; --muted: #9b8fa6; --line: #2c2636; --line-strong: #3d3549;
+    --accent: #f2b45c; --accent-ink: #f6c67e; --accent-contrast: #2a1c07;
+    --code-bg: #0d0a12; --code-ink: #e6ddf0;
+    --st-disc: #8595a8; --st-inc: #62a0f0; --st-done: #3fb950;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body {
+    margin: 0; background: var(--ground); color: var(--ink);
+    font-family: var(--sans); line-height: 1.6;
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+  }
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 24px; }
+  a { color: var(--accent-ink); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { text-wrap: balance; line-height: 1.12; letter-spacing: -0.02em; margin: 0; }
+  p { margin: 0; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+
+  .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--accent-ink); font-weight: 600; }
+  .mono { font-family: var(--mono); }
+
+  header.nav { position: sticky; top: 0; z-index: 50; background: color-mix(in srgb, var(--ground) 82%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+  .nav-inner { display: flex; align-items: center; gap: 20px; height: 60px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -0.02em; color: var(--ink); }
+  .brand:hover { text-decoration: none; }
+  .brand .glyph {
+    width: 26px; height: 26px; border-radius: 7px; flex: none;
+    border: 1px solid var(--line-strong); position: relative;
+    background:
+      linear-gradient(var(--accent), var(--accent)) no-repeat 6px 7px / 14px 2px,
+      linear-gradient(var(--accent), var(--accent)) no-repeat 6px 12px / 10px 2px,
+      linear-gradient(var(--accent), var(--accent)) no-repeat 6px 17px / 12px 2px,
+      var(--surface-2);
+  }
+  .nav-links { display: flex; gap: 22px; margin-left: auto; align-items: center; }
+  .nav-links a { color: var(--ink-soft); font-size: 14px; font-weight: 500; }
+  .nav-links a:hover { color: var(--ink); text-decoration: none; }
+  .nav-cta { font-family: var(--mono); font-size: 13px; font-weight: 600; border: 1px solid var(--line-strong); padding: 7px 13px; border-radius: 8px; color: var(--ink) !important; }
+  .nav-cta:hover { border-color: var(--accent); }
+  .theme-toggle { background: none; border: 1px solid var(--line-strong); color: var(--ink-soft); width: 34px; height: 34px; border-radius: 8px; cursor: pointer; font-size: 15px; display: grid; place-items: center; }
+  .theme-toggle:hover { border-color: var(--accent); color: var(--ink); }
+  @media (max-width: 760px) { .nav-links a.hide-sm { display: none; } }
+
+  .hero { padding: 74px 0 40px; }
+  .hero-grid { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 48px; align-items: center; }
+  @media (max-width: 900px) { .hero-grid { grid-template-columns: 1fr; gap: 34px; } }
+  h1.title { font-size: clamp(34px, 5.2vw, 56px); font-weight: 800; margin-top: 16px; }
+  h1.title .hl { color: var(--accent-ink); }
+  .lede { font-size: clamp(17px, 2vw, 20px); color: var(--ink-soft); margin-top: 20px; max-width: 34em; }
+  .cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
+  .btn { font-family: var(--mono); font-size: 14px; font-weight: 600; padding: 12px 20px; border-radius: 10px; cursor: pointer; border: 1px solid transparent; display: inline-flex; align-items: center; gap: 9px; }
+  .btn-primary { background: var(--accent); color: var(--accent-contrast); }
+  .btn-primary:hover { text-decoration: none; filter: brightness(1.06); }
+  .btn-ghost { border-color: var(--line-strong); color: var(--ink); }
+  .btn-ghost:hover { text-decoration: none; border-color: var(--accent); }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 26px; font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
+  .meta-row span { display: inline-flex; align-items: center; gap: 7px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
+
+  .scope { background: var(--code-bg); border: 1px solid var(--line-strong); border-radius: var(--radius); overflow: hidden; box-shadow: 0 24px 60px -30px rgba(0,0,0,0.55); }
+  .scope-bar { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+  .scope-bar .tl { width: 11px; height: 11px; border-radius: 50%; background: #4a4356; }
+  .scope-title { font-family: var(--mono); font-size: 11.5px; color: #a294b0; margin-left: 6px; letter-spacing: 0.04em; }
+  .scope-body { padding: 16px 16px 18px; font-family: var(--mono); font-size: 12.6px; color: var(--code-ink); position: relative; min-height: 268px; }
+  .scope-body::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(rgba(242,180,92,0.05), transparent 42%); }
+  .log-line { display: flex; gap: 10px; padding: 3px 0; opacity: 0; transform: translateY(4px); animation: rise 0.5s ease forwards; }
+  .log-line .t { color: #6b6076; flex: none; }
+  .log-line .m { color: #c3b8cf; }
+  .log-line .tag { flex: none; font-weight: 700; padding: 0 6px; border-radius: 4px; font-size: 11px; align-self: center; }
+  .tag.created { color: #62a0f0; border: 1px solid rgba(98,160,240,0.4); }
+  .tag.mod { color: #a294b0; border: 1px solid rgba(162,148,176,0.4); }
+  .tag.done { color: #3fb950; border: 1px solid rgba(63,185,80,0.5); background: rgba(63,185,80,0.08); }
+  .log-line.ok .m b { color: #3fb950; }
+  .scan { height: 1px; background: linear-gradient(90deg, transparent, var(--accent), transparent); margin: 10px 0; opacity: 0; animation: sweep 2.6s ease-in-out 0.2s infinite; }
+  @keyframes rise { to { opacity: 1; transform: none; } }
+  @keyframes sweep { 0% { opacity: 0; transform: translateX(-30%);} 50% { opacity: 0.9; } 100% { opacity: 0; transform: translateX(30%);} }
+  @media (prefers-reduced-motion: reduce) { .log-line { opacity: 1; transform: none; animation: none; } .scan { animation: none; opacity: 0.5; } }
+
+  section { padding: 60px 0; border-top: 1px solid var(--line); }
+  .sec-head { max-width: 42em; margin-bottom: 34px; }
+  h2 { font-size: clamp(25px, 3.4vw, 34px); font-weight: 750; margin-top: 12px; }
+  .sec-head p { color: var(--ink-soft); margin-top: 14px; font-size: 17px; }
+
+  .phases { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 720px) { .phases { grid-template-columns: 1fr; } }
+  .phase { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 24px; }
+  .phase .n { font-family: var(--mono); font-size: 12px; color: var(--accent-ink); letter-spacing: 0.12em; }
+  .phase h3 { font-size: 19px; margin: 8px 0 10px; }
+  .phase p { color: var(--ink-soft); font-size: 15px; }
+
+  .quick-grid { display: grid; grid-template-columns: 0.85fr 1.15fr; gap: 28px; align-items: start; }
+  @media (max-width: 860px) { .quick-grid { grid-template-columns: 1fr; } }
+  .steps { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 20px; }
+  .steps li { display: flex; gap: 14px; }
+  .steps .idx { font-family: var(--mono); font-weight: 700; color: var(--accent-ink); flex: none; width: 26px; }
+  .steps h3 { font-size: 16px; margin-bottom: 3px; }
+  .steps p { color: var(--muted); font-size: 14px; }
+  pre { margin: 0; background: var(--code-bg); color: var(--code-ink); border: 1px solid var(--line-strong); border-radius: 12px; padding: 18px; overflow-x: auto; font-family: var(--mono); font-size: 13px; line-height: 1.66; }
+  .code-label { font-family: var(--mono); font-size: 11.5px; color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; margin: 0 0 8px 2px; }
+  .c-str { color: #f2b45c; } .c-com { color: #6b6076; } .c-typ { color: #c39bf0; } .c-fn { color: #7fc8ff; }
+  :root[data-theme="light"] .c-typ { color: #8a52c9; } :root[data-theme="light"] .c-fn { color: #2f74c0; } :root[data-theme="light"] .c-str { color: #b6702a; }
+
+  .pipe { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  @media (max-width: 820px) { .pipe { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 460px) { .pipe { grid-template-columns: 1fr; } }
+  .stage { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .stage .k { font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: 0.1em; }
+  .stage h3 { font-size: 15.5px; margin: 8px 0 6px; }
+  .stage p { font-size: 13.5px; color: var(--ink-soft); }
+
+  .caps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  @media (max-width: 860px) { .caps { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 560px) { .caps { grid-template-columns: 1fr; } }
+  .cap { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+  .cap .ic { font-family: var(--mono); font-size: 12px; color: var(--accent-ink); letter-spacing: 0.08em; }
+  .cap h3 { font-size: 16px; margin: 10px 0 8px; }
+  .cap p { font-size: 14px; color: var(--ink-soft); }
+  .cap code { font-family: var(--mono); font-size: 12.5px; background: var(--surface-2); padding: 1px 5px; border-radius: 5px; color: var(--ink); }
+
+  .tbl-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 620px; }
+  th, td { text-align: left; padding: 13px 16px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th { font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); background: var(--surface-2); }
+  tbody tr:last-child td { border-bottom: none; }
+  .lvl { font-family: var(--mono); font-weight: 700; display: inline-flex; align-items: center; gap: 9px; white-space: nowrap; }
+  .sev { width: 10px; height: 22px; border-radius: 3px; flex: none; }
+  .st-disc { background: var(--st-disc); } .st-inc { background: var(--st-inc); } .st-done { background: var(--st-done); }
+
+  .cmp td.mark { text-align: center; font-family: var(--mono); }
+  .cmp td.yes, .cmp .mark.yes { color: var(--st-done); font-weight: 600; }
+  .cmp .mark.part { color: var(--accent-ink); }
+  .cmp .mark.no { color: var(--muted); }
+  .cmp th.col { text-align: center; }
+  .note { margin-top: 16px; font-size: 14px; color: var(--ink-soft); background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 10px; padding: 15px 18px; }
+
+  .cases { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  @media (max-width: 720px) { .cases { grid-template-columns: 1fr; } }
+  .case { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 22px; }
+  .case .tag { font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent-ink); }
+  .case h3 { font-size: 17px; margin: 10px 0 8px; }
+  .case p { font-size: 14.5px; color: var(--ink-soft); }
+
+  .limits { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 28px; }
+  @media (max-width: 720px) { .limits { grid-template-columns: 1fr; } }
+  .limit { display: flex; gap: 12px; padding: 4px 0; }
+  .limit .b { color: var(--accent-ink); font-family: var(--mono); flex: none; }
+  .limit p { font-size: 14px; color: var(--ink-soft); }
+  .limit b { color: var(--ink); font-weight: 600; }
+
+  .final { text-align: center; padding: 76px 0; }
+  .final h2 { margin-bottom: 16px; }
+  .final p { color: var(--ink-soft); max-width: 32em; margin: 0 auto 28px; font-size: 17px; }
+
+  footer { border-top: 1px solid var(--line); padding: 34px 0 48px; color: var(--muted); font-size: 13.5px; }
+  .foot-inner { display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; align-items: center; }
+  .foot-links { display: flex; gap: 20px; flex-wrap: wrap; font-family: var(--mono); font-size: 13px; }
+  .foot-links a { color: var(--ink-soft); }
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="#top"><span class="glyph" aria-hidden="true"></span> PathWatcher</a>
+    <nav class="nav-links" aria-label="Primary">
+      <a href="#how" class="hide-sm">How it works</a>
+      <a href="#capabilities" class="hide-sm">Capabilities</a>
+      <a href="#lifecycle" class="hide-sm">Lifecycle</a>
+      <a href="#compare" class="hide-sm">Compare</a>
+      <a class="nav-cta" href="https://github.com/Cantara/PathWatcher">GitHub ↗</a>
+      <button class="theme-toggle" id="themeBtn" aria-label="Toggle color theme" title="Toggle theme">◐</button>
+    </nav>
+  </div>
+</header>
+
+<a id="top"></a>
+<main>
+<section class="hero" style="border-top:none">
+  <div class="wrap hero-grid">
+    <div>
+      <span class="eyebrow">Filesystem watching · JVM library</span>
+      <h1 class="title">Act on files the moment they've <span class="hl">finished</span> landing.</h1>
+      <p class="lede">PathWatcher watches a directory for created, modified and removed files — and tells you
+        when a file is <em>completely written</em>, so you never grab a half-finished upload. Native JDK events
+        where the OS allows, automatic polling on macOS. One dependency, nothing to install.</p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="#quickstart">Quickstart →</a>
+        <a class="btn btn-ghost" href="https://github.com/Cantara/PathWatcher">View on GitHub</a>
+      </div>
+      <div class="meta-row">
+        <span><i class="dot"></i> Java 8+</span>
+        <span><i class="dot"></i> Native &amp; poll modes</span>
+        <span><i class="dot"></i> Stable &amp; active</span>
+        <span><i class="dot"></i> Apache-2.0</span>
+      </div>
+    </div>
+
+    <div class="scope" role="img" aria-label="Example event stream: a file is created, modified as it is written, then reported completely created and safe to process.">
+      <div class="scope-bar">
+        <span class="tl"></span><span class="tl"></span><span class="tl"></span>
+        <span class="scope-title">pathwatch · inbox events</span>
+      </div>
+      <div class="scope-body">
+        <div class="log-line" style="animation-delay:.05s"><span class="t">09:41:02</span><span class="tag created">CREATED</span><span class="m">inbox/report-q3.csv</span></div>
+        <div class="log-line" style="animation-delay:.28s"><span class="t">09:41:02</span><span class="tag mod">MODIFIED</span><span class="m">inbox/report-q3.csv &nbsp;<span style="color:#6b6076">writing…</span></span></div>
+        <div class="log-line" style="animation-delay:.5s"><span class="t">09:41:03</span><span class="tag mod">MODIFIED</span><span class="m">inbox/report-q3.csv &nbsp;<span style="color:#6b6076">writing…</span></span></div>
+        <div class="scan"></div>
+        <div class="log-line ok" style="animation-delay:.95s"><span class="t">09:41:06</span><span class="tag done">COMPLETELY&nbsp;CREATED</span><span class="m">inbox/report-q3.csv</span></div>
+        <div class="log-line ok" style="animation-delay:1.15s"><span class="t">09:41:06</span><span class="m">&nbsp; ↳ <b>safe to process</b> — file is fully written and closed</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="why">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">The idea</span>
+      <h2>"Created" is not the same as "finished".</h2>
+      <p>The moment a file appears is the moment it's least safe to touch — it may still be uploading. The
+      classic bug is an ingestion job that reads a file mid-write and chokes on half a row. PathWatcher solves
+      exactly that.</p>
+    </div>
+    <div class="phases">
+      <div class="phase">
+        <div class="n">THE PROBLEM</div>
+        <h3>A CREATE event fires too early</h3>
+        <p>Raw filesystem APIs tell you a file was <em>created</em>, not that it's <em>done</em>. Act on the
+        create and you race the writer — truncated reads, partial parses, corrupted imports.</p>
+      </div>
+      <div class="phase">
+        <div class="n">THE ANSWER</div>
+        <h3>A COMPLETELY_CREATED event fires when it's done</h3>
+        <p>A completion worker watches each new file settle — by timeout or by retry — and only then raises
+        <span class="mono">FILE_COMPLETELY_CREATED</span>. Register a handler and you receive files you can
+        safely open, every time.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="quickstart">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">Quickstart</span>
+      <h2>Watch a folder in a handful of lines.</h2>
+      <p>Point it at a directory, register the handlers you care about, start. It picks the right scanner mode for the OS on its own.</p>
+    </div>
+    <div class="quick-grid">
+      <ol class="steps">
+        <li><span class="idx">01</span><div><h3>Add the dependency</h3><p>Maven or Gradle, from the Cantara repository.</p></div></li>
+        <li><span class="idx">02</span><div><h3>Watch &amp; register handlers</h3><p>Created, modified, removed — and completely-created for safe processing.</p></div></li>
+        <li><span class="idx">03</span><div><h3>Start</h3><p>Native <span class="mono">WatchService</span> where available, polling on macOS — chosen automatically.</p></div></li>
+      </ol>
+      <div>
+        <p class="code-label">pom.xml</p>
+<pre><span class="c-com">&lt;!-- repository: https://mvnrepo.cantara.no --&gt;</span>
+<span class="c-typ">&lt;dependency&gt;</span>
+  <span class="c-typ">&lt;groupId&gt;</span>no.cantara.pathwatcher<span class="c-typ">&lt;/groupId&gt;</span>
+  <span class="c-typ">&lt;artifactId&gt;</span>pathwatch<span class="c-typ">&lt;/artifactId&gt;</span>
+  <span class="c-typ">&lt;version&gt;</span>1.71<span class="c-typ">&lt;/version&gt;</span>
+<span class="c-typ">&lt;/dependency&gt;</span></pre>
+        <p class="code-label" style="margin-top:16px">Ingest.java</p>
+<pre><span class="c-typ">PathWatcher</span> pw = <span class="c-typ">PathWatcher</span>.<span class="c-fn">getInstance</span>();
+
+pw.<span class="c-fn">watch</span>(<span class="c-typ">Path</span>.<span class="c-fn">of</span>(<span class="c-str">"/srv/inbox"</span>));
+
+<span class="c-com">// fires only once the file is fully written and closed</span>
+pw.<span class="c-fn">registerFileCompletelyCreatedHandler</span>(event -> {
+    <span class="c-typ">Path</span> file = event.<span class="c-fn">getFile</span>();
+    ingest(file);   <span class="c-com">// safe: no partial reads</span>
+});
+
+pw.<span class="c-fn">registerRemovedHandler</span>(event ->
+    log.<span class="c-fn">info</span>(<span class="c-str">"gone: {}"</span>, event.<span class="c-fn">getFile</span>()));
+
+pw.<span class="c-fn">start</span>();</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">How it works</span>
+      <h2>Producer, consumer, and a completion worker.</h2>
+      <p>A producer discovers filesystem changes and queues them; a consumer drains the queue, waits for new
+      files to settle, and invokes your callbacks. The scanner mode is chosen for the platform.</p>
+    </div>
+    <div class="pipe">
+      <div class="stage"><div class="k">WATCH</div><h3>Native or poll</h3><p>JDK <span class="mono">WatchService</span> for event-driven I/O; polling where native events aren't available (macOS).</p></div>
+      <div class="stage"><div class="k">PRODUCE</div><h3>Discover changes</h3><p>Created, modified and removed files are detected and queued on a worker thread.</p></div>
+      <div class="stage"><div class="k">SETTLE</div><h3>Wait for completion</h3><p>A completion worker confirms a new file has stopped growing — by timeout or by retries.</p></div>
+      <div class="stage"><div class="k">CONSUME</div><h3>Invoke handlers</h3><p>The consumer thread calls your registered callbacks with a <span class="mono">FileWatchEvent</span>.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="capabilities">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">Capabilities</span>
+      <h2>Everything a drop-folder pipeline needs.</h2>
+      <p>Lifecycle events, safe-to-process completion, and cross-platform behaviour — with sensible defaults.</p>
+    </div>
+    <div class="caps">
+      <div class="cap"><div class="ic">EVENTS</div><h3>Created · modified · removed</h3><p>Register a handler per lifecycle event; each fires with a <code>FileWatchEvent</code> carrying the path and file attributes.</p></div>
+      <div class="cap"><div class="ic">COMPLETION</div><h3>Completely-created</h3><p>The headline feature: know when a file is fully written and closed before you open it — no more partial reads.</p></div>
+      <div class="cap"><div class="ic">CROSS-PLATFORM</div><h3>Native &amp; poll, auto</h3><p>Uses native <span class="mono">WatchService</span> when the JDK/OS supports it, and falls back to polling on macOS automatically.</p></div>
+      <div class="cap"><div class="ic">BACKFILL</div><h3>Existing files at startup</h3><p><code>setScanForExistingFilesAtStartup(true)</code> replays files already in the directory as create events on start.</p></div>
+      <div class="cap"><div class="ic">TUNABLE</div><h3>Completion modes</h3><p>Choose <span class="mono">TIMEOUT</span> or <span class="mono">RETRIES</span> and set the interval, to match how your writers behave.</p></div>
+      <div class="cap"><div class="ic">SELF-CONTAINED</div><h3>Just the JDK &amp; a queue</h3><p>Event-driven I/O on worker threads, one small dependency footprint, no native binaries or host agents.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="lifecycle">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">File lifecycle</span>
+      <h2>From discovered to safe-to-process.</h2>
+      <p>Every watched file moves through a small set of states. The one you usually wait for is
+      <span class="mono">COMPLETED</span> — surfaced as the completely-created event.</p>
+    </div>
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>State</th><th>Meaning</th><th>Event you receive</th></tr></thead>
+        <tbody>
+          <tr><td><span class="lvl"><span class="sev st-disc"></span>DISCOVERED</span></td><td>A new path has appeared in the watched directory.</td><td class="mono">FILE_CREATED</td></tr>
+          <tr><td><span class="lvl"><span class="sev st-inc"></span>INCOMPLETE</span></td><td>The file is still being written — not yet safe to read.</td><td class="mono">FILE_MODIFY</td></tr>
+          <tr><td><span class="lvl"><span class="sev st-done"></span>COMPLETED</span></td><td>Writing has settled; the file is fully written and closed.</td><td class="mono">FILE_COMPLETELY_CREATED</td></tr>
+          <tr><td><span class="lvl"><span class="sev st-disc"></span>REMOVED</span></td><td>The path was deleted from the watched directory.</td><td class="mono">FILE_REMOVED</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section id="usecases">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">Use cases</span>
+      <h2>Where it earns its keep.</h2>
+    </div>
+    <div class="cases">
+      <div class="case"><span class="tag">Ingestion</span><h3>Drop-folder ETL</h3><p>An upstream system drops CSVs or XML into a directory. Process each one exactly when it's finished — never mid-write.</p></div>
+      <div class="case"><span class="tag">Uploads</span><h3>Large files, safely</h3><p>A 2&nbsp;GB upload takes seconds to appear and minutes to finish. Wait for completely-created and skip the truncated-read bug entirely.</p></div>
+      <div class="case"><span class="tag">Integration</span><h3>Legacy handoff by folder</h3><p>Many systems still integrate by writing to a shared directory. PathWatcher turns that folder into a clean event stream.</p></div>
+      <div class="case"><span class="tag">Startup</span><h3>Catch up on what's waiting</h3><p>Replay files already sitting in the directory at boot, so nothing that arrived while you were down gets missed.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="compare">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">Where it fits</span>
+      <h2>WatchService with the sharp edges filed off.</h2>
+      <p>The JDK gives you raw filesystem events. PathWatcher adds the parts you'd otherwise write yourself —
+      completion detection, macOS polling, and a clean handler API — and stays a small library.</p>
+    </div>
+    <div class="tbl-scroll">
+      <table class="cmp">
+        <thead>
+          <tr>
+            <th>&nbsp;</th>
+            <th class="col">PathWatcher</th>
+            <th class="col">java.nio WatchService</th>
+            <th class="col">commons-io monitor</th>
+            <th class="col">inotify / fswatch</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Created / modified / removed events</td><td class="mark yes">●</td><td class="mark yes">●</td><td class="mark yes">●</td><td class="mark yes">●</td></tr>
+          <tr><td>"File completely written" signal</td><td class="mark yes">●</td><td class="mark no">—</td><td class="mark no">—</td><td class="mark no">—</td></tr>
+          <tr><td>Works on macOS out of the box</td><td class="mark yes">●</td><td class="mark part">◐</td><td class="mark yes">●</td><td class="mark part">◐</td></tr>
+          <tr><td>Clean per-event handler API</td><td class="mark yes">●</td><td class="mark no">—</td><td class="mark yes">●</td><td class="mark no">—</td></tr>
+          <tr><td>Pure JVM, no external tools</td><td class="mark yes">●</td><td class="mark yes">●</td><td class="mark yes">●</td><td class="mark no">—</td></tr>
+          <tr><td>Replay existing files at startup</td><td class="mark yes">●</td><td class="mark no">—</td><td class="mark part">◐</td><td class="mark no">—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note"><b>Honest positioning:</b> if all you need is a raw create/modify/delete event, plain
+    <span class="mono">WatchService</span> or <span class="mono">commons-io</span> will do. PathWatcher's reason to
+    exist is the <em>completely-created</em> signal plus consistent macOS behaviour — the boilerplate every
+    drop-folder pipeline ends up writing. It watches a single directory by design; for many independent trees,
+    run several watchers or reach for a heavier framework.</p>
+  </div>
+</section>
+
+<section id="limits">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">Known limits</span>
+      <h2>What to keep in mind.</h2>
+      <p>Stable and in active use — with a few deliberate boundaries worth knowing up front.</p>
+    </div>
+    <div class="limits">
+      <div class="limit"><span class="b">›</span><p><b>One watch directory.</b> A single instance watches one <span class="mono">watchDir</span>. Run multiple watchers for multiple trees.</p></div>
+      <div class="limit"><span class="b">›</span><p><b>Callbacks aren't thread-safe.</b> Handlers run on the consumer thread; guard any shared state you touch from them.</p></div>
+      <div class="limit"><span class="b">›</span><p><b>macOS uses polling.</b> The JDK has no native watch events on macOS, so PathWatcher polls there — slightly higher latency by design.</p></div>
+      <div class="limit"><span class="b">›</span><p><b>Completion is heuristic.</b> "Done writing" is inferred by settling (timeout/retries); tune the mode to how your writers actually behave.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="final" style="border-top:none">
+  <div class="wrap">
+    <span class="eyebrow">Stable · actively developed</span>
+    <h2>Turn a directory into a clean event stream.</h2>
+    <p>Add the dependency, watch a folder, and start receiving files you can safely open. That's the whole idea.</p>
+    <div class="cta-row" style="justify-content:center">
+      <a class="btn btn-primary" href="https://github.com/Cantara/PathWatcher">Get started on GitHub →</a>
+      <a class="btn btn-ghost" href="https://github.com/Cantara/PathWatcher/blob/master/README.md">Read the docs</a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap foot-inner">
+    <div>
+      <div class="mono" style="color:var(--ink)">PathWatcher</div>
+      <div style="margin-top:6px">Part of the <a href="https://wiki.cantara.no">Cantara</a> open source ecosystem · Apache-2.0</div>
+    </div>
+    <nav class="foot-links" aria-label="Footer">
+      <a href="https://github.com/Cantara/PathWatcher">Source</a>
+      <a href="https://github.com/Cantara/PathWatcher/issues">Issues</a>
+      <a href="https://github.com/Cantara/ProcessWatcher">ProcessWatcher ↗</a>
+      <a href="https://wiki.cantara.no">Cantara</a>
+    </nav>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    var btn = document.getElementById('themeBtn');
+    var root = document.documentElement;
+    function current() {
+      var set = root.getAttribute('data-theme');
+      if (set) return set;
+      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    btn.addEventListener('click', function () {
+      var next = current() === 'dark' ? 'light' : 'dark';
+      root.setAttribute('data-theme', next);
+      try { localStorage.setItem('pw-theme', next); } catch (e) {}
+    });
+    try {
+      var saved = localStorage.getItem('pw-theme');
+      if (saved) root.setAttribute('data-theme', saved);
+    } catch (e) {}
+  })();
+</script>
+</body>
+</html>
